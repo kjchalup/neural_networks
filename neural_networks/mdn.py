@@ -254,7 +254,7 @@ class MDN(object):
                 np.sum(coeffs * means, axis=1, keepdims=True))
 
     def fit(self, x, y, max_epochs=1000, min_epochs=10, batch_size=32,
-            lr=1e-3, max_time=np.inf, nn_verbose=False,
+            lr=1e-3, max_time=np.inf, nn_verbose=True,
             max_nonimprovs=30, dropout_keep_prob=1., **kwargs):
         """ Train the MDN to maximize the data likelihood.
 
@@ -279,6 +279,9 @@ class MDN(object):
             tr_losses (num_epochs,): Training errors (zero-padded).
             val_losses (num_epochs,): Validation errors (zero-padded).
         """
+        if max_epochs < min_epochs:
+            print('Setting max_epochs to {}'.format(min_epochs))
+            max_epochs = min_epochs
         # Split data into a training and validation set.
         n_samples = x.shape[0]
         n_val = int(n_samples / 10)
@@ -355,14 +358,13 @@ if __name__ == "__main__":
 
     # Make test data: a noisy mix of functions sampled with different probs.
     x = np.linspace(-1, 1, 10000).reshape(-1, 1)
-    y1 = x**2
-    y2 = -x/2-1
-    y3 = -x-2
-    y4 = x-3
+    y1 = x**2 + np.random.randn(*x.shape) * .3
+    y2 = -x/2-1 + np.random.randn(*x.shape) * .1
+    y3 = -x-2 + np.random.randn(*x.shape) * .1
+    y4 = x-3 + np.random.randn(*x.shape) * .1
     y = np.hstack([y1, y2, y3, y4])
     ids = np.random.choice(4, y.shape[0], p=[.7, .1, .1, .1])
-    y = x + (y[np.arange(y.shape[0]), ids].reshape(-1, 1)
-            + np.random.randn(*x.shape) * .1)
+    y = x + y[np.arange(y.shape[0]), ids].reshape(-1, 1)
 
     # Fit a mixture-density network. You should see the negative log-likelihood
     # decrease to about zero.
@@ -394,10 +396,12 @@ if __name__ == "__main__":
     plt.plot(x, y_pred)
 
     plt.subplot(1, 3, 2)
-    plt.title('Samples from p(y | x)')
+    plt.title('Estimated p(y | x)')
     plt.xlabel('x')
     plt.ylabel('y')
-    plt.plot(x, samples, 'k.', alpha=.2, markeredgecolor='None')
+    plt.imshow(logliks.reshape(100, 100), interpolation='nearest',
+            extent=[x.min(), x.max(), samples.min(), samples.max()],
+            aspect='auto', cmap='coolwarm', origin='low')
 
     plt.subplot(1, 3, 3)
     plt.title('Learning most likely y | x')
