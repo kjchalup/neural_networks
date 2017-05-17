@@ -1,4 +1,4 @@
-"""setup.py for the neural_networks package."""
+"""setup.py for the neural_networks repository."""
 import os
 from setuptools import setup
 
