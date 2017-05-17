@@ -241,13 +241,14 @@ class NN(object):
         return tr_losses, val_losses
 
 if __name__ == "__main__":
+    """ Check that everything works as expected. Should take several 
+    seconds on a CPU machine. """
     import numpy as np
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
     nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128, 128])
     nn.fit(x, y, nn_verbose=True, lr=1e-2)
-    #print('Data loglik: {}.'.format(mdn.loglik(x, y)))
     y_pred = nn.predict(x)
     plt.plot(x, y, x, y_pred)
     plt.show()

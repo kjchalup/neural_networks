@@ -348,31 +348,43 @@ class MDN(object):
         return tr_losses, val_losses
 
 if __name__ == "__main__":
+    """ Check that everything works as expected. Should take about 5min
+    on a cpu machine. """
     import numpy as np
     from matplotlib import pyplot as plt
+
+    # Make test data: a noisy mix of functions sampled with different probs.
     x = np.linspace(-1, 1, 10000).reshape(-1, 1)
-    #y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
     y1 = x**2
-    y2 = x-1
-    y3 = x-2
+    y2 = -x/2-1
+    y3 = -x-2
     y4 = x-3
     y = np.hstack([y1, y2, y3, y4])
     ids = np.random.choice(4, y.shape[0], p=[.7, .1, .1, .1])
     y = x + (y[np.arange(y.shape[0]), ids].reshape(-1, 1)
             + np.random.randn(*x.shape) * .1)
-    y += x + np.random.randn(*y.shape) * .01
+
+    # Fit a mixture-density network. You should see the negative log-likelihood
+    # decrease to about zero.
     mdn = MDN(x_dim=x.shape[1], y_dim=y.shape[1], n_comp=10, arch=[32, 32])
     mdn.fit(x, y, nn_verbose=True, lr=1e-2,
             min_epochs=10000, max_epochs=10000, batch_size=128)
+
+    # Predict the expected value of P(Y | X).
     y_pred = mdn.predict(x)
+
+    # Compute the likelihood and sample from P(Y | X).
     x_grid = np.linspace(-1, 1, 100).reshape(-1, 1)
     y_grid = np.linspace(y.min(), y.max(), 100)
     logliks = mdn.loglik(np.tile(x_grid, [100, 1]),
             np.repeat(y_grid, 100).reshape(-1, 1))
     logliks = np.exp(logliks)
     samples = mdn.sample(x=x)
+
+    # Compute the most-likely Y given each X.
     most_lik = y_grid[np.argmax(logliks.reshape(100, 100), axis=0)]
 
+    # Plot the answers.
     plt.figure(figsize=(20, 10))
     plt.subplot(1, 3, 1)
     plt.title('Learning expected y | x')
@@ -385,9 +397,6 @@ if __name__ == "__main__":
     plt.title('Samples from p(y | x)')
     plt.xlabel('x')
     plt.ylabel('y')
-    #plt.imshow(logliks.reshape(100, 100), cmap='coolwarm', origin='low',
-    #        extent=[-1, 1, y.min(), y.max()],
-    #        vmin=logliks.min(), vmax=logliks.max())
     plt.plot(x, samples, 'k.', alpha=.2, markeredgecolor='None')
 
     plt.subplot(1, 3, 3)
