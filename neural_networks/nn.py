@@ -141,7 +141,7 @@ class NN(object):
         try:
             x = self.scaler_x.transform(x)
         except NotFittedError:
-            print 'Warning: scalers are not fitted.'
+            print('Warning: scalers are not fitted.')
         y_pred = self.sess.run(self.y_pred, {self.x_tf: x, self.keep_prob: 1.})
         return self.scaler_y.inverse_transform(y_pred)
 

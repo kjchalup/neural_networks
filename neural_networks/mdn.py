@@ -42,10 +42,11 @@ def get_mdn_params(mdn_out):
     n_comp = int(mdn_out.shape[1])
     if n_comp % 3 != 0:
         raise ValueError('mdn_out.shape[1] must be divisible by 3.')
-    n_comp /= 3
-    coeffs = tf.nn.softmax(mdn_out[:, :n_comp])
-    sigmas = 1e-3 + tf.exp(mdn_out[:, n_comp:n_comp*2])
-    means = mdn_out[:, n_comp*2:n_comp*3]
+    n_comp //= 3
+    n_comp_tf = tf.cast(n_comp, tf.int32)
+    coeffs = tf.nn.softmax(mdn_out[:, :n_comp_tf])
+    sigmas = 1e-3 + tf.exp(mdn_out[:, n_comp_tf:n_comp_tf*2])
+    means = mdn_out[:, n_comp_tf*2:n_comp_tf*3]
     return coeffs, sigmas, means, n_comp
 
 
@@ -203,7 +204,7 @@ class MDN(object):
             x = self.scaler_x.transform(x)
             y = self.scaler_y.transform(y)
         except NotFittedError:
-            print 'Warning: scalers are not fitted.'
+            print('Warning: scalers are not fitted.')
         loglik = self.sess.run(
             mdn_loglik(self.y_tf, self.y_pred),
             {self.x_tf: x,
@@ -224,7 +225,7 @@ class MDN(object):
         try:
             x = self.scaler_x.transform(x)
         except NotFittedError:
-            print 'Warning: scalers are not fitted.'
+            print('Warning: scalers are not fitted.')
         n_grid = y_grid.shape[0]
         samples = np.zeros((x.shape[0], 1))
         coeffs, sigmas, means, n_comp = get_mdn_params(self.y_pred)
@@ -246,7 +247,7 @@ class MDN(object):
         try:
             x = self.scaler_x.transform(x)
         except NotFittedError:
-            print 'Warning: scalers are not fitted.'
+            print('Warning: scalers are not fitted.')
         coeffs, sigmas, means, n_comp = get_mdn_params(self.y_pred)
         coeffs, sigmas, means = self.sess.run([coeffs, sigmas, means],
                 {self.x_tf: x, self.keep_prob: 1.})
