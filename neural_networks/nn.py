@@ -33,14 +33,15 @@ def define_nn(x_tf, y_dim, Ws, bs, keep_prob, tied_covar=False):
     out_dim = Ws[-1].get_shape().as_list()[1]
     if out_dim != y_dim:
         raise ValueError('NN output dimension is not '
-                         'compatible with input shape.')
+                         'compatible with output shape.')
 
     if len(Ws) < 2:
         nonlin = tf.nn.sigmoid
     else:
         nonlin = tf.nn.relu
 
-    out = tf.add(tf.matmul(x_tf, Ws[0]), bs[0])
+    with tf.name_scope('hidden0'):
+        out = tf.add(tf.matmul(x_tf, Ws[0]), bs[0])
     for layer_id, (W, b) in enumerate(zip(Ws[1:], bs[1:])):
         with tf.name_scope('hidden{}'.format(layer_id)):
             out = nonlin(out)

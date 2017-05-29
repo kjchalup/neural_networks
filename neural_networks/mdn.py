@@ -303,18 +303,17 @@ class MDN(object):
         best_val = np.inf
         start_time = time.time()
         for epoch_id in range(max_epochs):
-            tr_loss = 0
             batch_ids = np.random.choice(n_samples-n_val,
                     batch_size, replace=False)
-            tr_loss += self.sess.run(
-                self.loss_tf, {self.x_tf: x_tr[batch_ids],
-                               self.y_tf: y_tr[batch_ids],
-                               self.keep_prob: 1.})
             self.sess.run(self.train_op_tf,
                           {self.x_tf: x_tr[batch_ids],
                            self.y_tf: y_tr[batch_ids],
                            self.keep_prob: dropout_keep_prob,
                            self.lr_tf: lr})
+            tr_loss = self.sess.run(
+                self.loss_tf, {self.x_tf: x_tr[batch_ids],
+                               self.y_tf: y_tr[batch_ids],
+                               self.keep_prob: 1.})
             val_loss = self.sess.run(self.loss_tf,
                                      {self.x_tf: x_val,
                                       self.y_tf: y_val,
