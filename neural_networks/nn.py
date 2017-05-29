@@ -89,10 +89,8 @@ class NN(object):
         self.Ws = [tf.Variable(W_init) for W_init in self.Ws]
 
         # Initialize the biases.
-        #self.bs = [tf.Variable(tf.zeros((1, num_units)), dtype=tf.float32)
         self.bs = [tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
                    for num_units in arch]
-        #self.bs.append(tf.Variable(tf.zeros((1, self.y_dim)), dtype=tf.float32))
         self.bs.append(tf.Variable(tf.zeros((1, 1)), dtype=tf.float32))
 
         # Initialize dropout keep_prob.

@@ -123,10 +123,29 @@ class MTN(object):
             x_dim, self.shared_arch[0]], stddev=1./x_dim, dtype=tf.float32)]
         for layer_id in range(len(self.shared_arch)-1):
             self.W_shared.append(tf.truncated_normal(
-                [self.shared_arch[la
-        self.b_shared = [tf.
-        self.W_tasks =
-        self.b_tasks =
+                [self.shared_arch[layer_id], self.shared_arch[layer_id+1]],
+                stddev=1. / self.shared_arch[layer_id], dtype=tf.float32))
+        self.W_shared = [tf.Variable(W_init) for W_init in self.W_shared]
+
+        self.b_shared = [tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
+                for _ in self.shared_arch]
+
+        self.W_tasks = [[tf.truncated_normal([
+            self.shared_arch[-1], self.tasks_arch[tas_id][0]],
+            stddev=1./x_dim, dtype=tf.float32)]
+            for task_id in range(self.n_tasks)]
+
+        for layer_id in range(len(self.task_arch)-1):
+            for task_id in range(self.n_tasks):
+                self.W_tasks[task_id].append(tf.truncated_normal(
+                    [self.task_arch[layer_id], self.task_arch[layer_id+1]],
+                    stddev=1. / self.task_arch[layer_id], dtype=tf.float32))
+        for task_id in range(self.n_tasks):
+            self.W_tasks[task_id] = [tf.Variable(W_init)
+                    for W_init in self.W_tasks[task_id]]
+
+        self.b_tasks = [[tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
+                for _ in self.task_arch] for _ in range(self.n_tasks)]
 
         # Define the neural networks.
         self.y_preds = define_mtn(
@@ -148,9 +167,7 @@ class MTN(object):
         self.saver = tf.train.Saver(max_to_keep=1)
 
         # Define the Tensorflow session, and its initializer op.
-        self.sess = tf.Session()
-        self.init_op = tf.global_variables_initializer()
-        self.sess.run(self.init_op)
+        self.sess = tf.Session() self.init_op = tf.global_variables_initializer() self.sess.run(self.init_op)
 
     def close(self):
         """ Close the session and reset the graph. Note: this
