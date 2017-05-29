@@ -31,6 +31,7 @@ def rescale(data: np.ndarray,
         rescaled[data_id][:] = out.flatten()
     return rescaled
 
+
 def define_mtn(x: tf.placeholder,
                y_dims: List[int],
                W_shared: List[tf.placeholder],
@@ -119,8 +120,11 @@ class MTN(object):
 
         # Initialize MTN weights.
         self.W_shared = [tf.truncated_normal([
-            x_dim, self.shared_arch[0]], stddev=1./x_dim, dtype=tf.float32]
-        self.b_shared = 
+            x_dim, self.shared_arch[0]], stddev=1./x_dim, dtype=tf.float32)]
+        for layer_id in range(len(self.shared_arch)-1):
+            self.W_shared.append(tf.truncated_normal(
+                [self.shared_arch[la
+        self.b_shared = [tf.
         self.W_tasks =
         self.b_tasks =
 

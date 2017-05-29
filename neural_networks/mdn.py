@@ -139,8 +139,8 @@ class MDN(object):
                 x_dim, self.arch[0]], stddev=.1 / x_dim, dtype=tf.float32)]
             for layer_id in range(len(arch)-1):
                 self.Ws.append(tf.truncated_normal(
-                    [arch[layer_id - 1], arch[layer_id]],
-                    stddev=1. / arch[layer_id - 1], dtype=tf.float32))
+                    [arch[layer_id], arch[layer_id+1]],
+                    stddev=1. / arch[layer_id], dtype=tf.float32))
             self.Ws.append(tf.truncated_normal(
                 [arch[-1], 3 * n_comp], stddev=.1 / arch[-1], dtype=tf.float32))
         else:
@@ -149,9 +149,9 @@ class MDN(object):
         self.Ws = [tf.Variable(W_init) for W_init in self.Ws]
 
         # Initialize the biases.
-        self.bs = [tf.Variable(tf.zeros(num_units), dtype=tf.float32)
+        self.bs = [tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
                    for num_units in arch]
-        self.bs.append(tf.Variable(tf.zeros(self.y_dim), dtype=tf.float32))
+        self.bs.append(tf.Variable(tf.zeros((1, 1)), dtype=tf.float32))
 
         # Initialize dropout keep_prob.
         self.keep_prob = tf.placeholder(tf.float32)
