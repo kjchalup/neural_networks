@@ -1,5 +1,10 @@
 """ Multi-task network routines. """
+import sys
+import time
 from tempfile import NamedTemporaryFile
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.exceptions import NotFittedError
 import numpy as np
 import tensorflow as tf
 from typing import List
@@ -24,9 +29,9 @@ def rescale(data: np.ndarray,
     rescaled = np.zeros_like(data)
     for data_id, task in enumerate(tasks):
         if direction == 0:
-            scaler = scalers[data_id].transform 
+            scaler = scalers[task].transform 
         else:
-            scaler = scalers[data_id].inverse_transform
+            scaler = scalers[task].inverse_transform
         out = scaler(np.atleast_2d(data[data_id]))
         rescaled[data_id][:] = out.flatten()
     return rescaled
@@ -51,7 +56,7 @@ def define_mtn(x: tf.placeholder,
     Returns:
         y_pred: List of output tensors, one per task.
     """
-    out_dims = [Ws[-1].get_shape.as_list()[1] for Ws in W_tasks]
+    out_dims = [Ws[-1].get_shape().as_list()[1] for Ws in W_tasks]
     if out_dims != y_dims:
         raise ValueError('MTN output dimension is not '
                 'compatible with output shape.')
@@ -62,9 +67,9 @@ def define_mtn(x: tf.placeholder,
 
     # Create the shared layers.
     with tf.name_scope('sharedhidden0'):
-        out = tf.add(tf.matmul(x_tf, W_shared[0]), b_shared[0])
+        out = tf.add(tf.matmul(x, W_shared[0]), b_shared[0])
     for layer_id, (W, b) in enumerate(zip(W_shared[1:], b_shared[1:])):
-        with tf.name_scope('sharedhidden{}').format(layer_id):
+        with tf.name_scope('sharedhidden{}'.format(layer_id)):
             out = nonlin(out)
             out = tf.add(tf.matmul(out, W), b)
 
@@ -88,7 +93,7 @@ class MTN(object):
             x_dim: int,
             y_dims: List[int],
             shared_arch: List[int],
-            task_arch: List[int])
+            task_arch: List[int]):
         """ A Multi-Task Network. 
 
         Creates a neural net that can be trained to perform `n_tasks`
@@ -113,39 +118,45 @@ class MTN(object):
         self.n_tasks = len(y_dims)
 
         # Define Tensorflow placeholders.
-        self.lr_tf = tf.placeholder(tf.float32, name='learning rate')
+        self.lr_tf = tf.placeholder(tf.float32, name='learning_rate')
         self.x_tf = tf.placeholder(tf.float32, [None, x_dim], name='X')
         self.ys_tf = [tf.placeholder(tf.float32, [None, y_dims[task_id]],
             name='Y_{}'.format(task_id)) for task_id in range(self.n_tasks)]
 
         # Initialize MTN weights.
         self.W_shared = [tf.truncated_normal([
-            x_dim, self.shared_arch[0]], stddev=1./x_dim, dtype=tf.float32)]
-        for layer_id in range(len(self.shared_arch)-1):
+            x_dim, shared_arch[0]], stddev=1./x_dim, dtype=tf.float32)]
+        for layer_id in range(len(shared_arch)-1):
             self.W_shared.append(tf.truncated_normal(
-                [self.shared_arch[layer_id], self.shared_arch[layer_id+1]],
-                stddev=1. / self.shared_arch[layer_id], dtype=tf.float32))
+                [shared_arch[layer_id], shared_arch[layer_id+1]],
+                stddev=1. / shared_arch[layer_id], dtype=tf.float32))
         self.W_shared = [tf.Variable(W_init) for W_init in self.W_shared]
 
         self.b_shared = [tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
-                for _ in self.shared_arch]
+                for _ in shared_arch]
 
         self.W_tasks = [[tf.truncated_normal([
-            self.shared_arch[-1], self.tasks_arch[tas_id][0]],
+            shared_arch[-1], task_arch[0]],
             stddev=1./x_dim, dtype=tf.float32)]
-            for task_id in range(self.n_tasks)]
+            for _ in range(self.n_tasks)]
 
-        for layer_id in range(len(self.task_arch)-1):
+        for layer_id in range(len(task_arch)-1):
             for task_id in range(self.n_tasks):
                 self.W_tasks[task_id].append(tf.truncated_normal(
-                    [self.task_arch[layer_id], self.task_arch[layer_id+1]],
-                    stddev=1. / self.task_arch[layer_id], dtype=tf.float32))
+                    [task_arch[layer_id], task_arch[layer_id+1]],
+                    stddev=1. / task_arch[layer_id], dtype=tf.float32))
+
+        for task_id in range(self.n_tasks):
+            self.W_tasks[task_id].append(tf.truncated_normal(
+                [task_arch[-1], self.y_dims[task_id]],
+                stddev=1. / task_arch[-1], dtype=tf.float32))
+
         for task_id in range(self.n_tasks):
             self.W_tasks[task_id] = [tf.Variable(W_init)
                     for W_init in self.W_tasks[task_id]]
 
         self.b_tasks = [[tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
-                for _ in self.task_arch] for _ in range(self.n_tasks)]
+                for _ in self.W_tasks[task_id]] for task_id in range(self.n_tasks)]
 
         # Define the neural networks.
         self.y_preds = define_mtn(
@@ -153,7 +164,7 @@ class MTN(object):
             self.W_tasks, self.b_tasks)
 
         # Define the mutli-task loss and training ops.
-        self.losses_tf = [tf.losses.mean_squared_error(self.ys_ts[task_id],
+        self.losses_tf = [tf.losses.mean_squared_error(self.ys_tf[task_id],
             self.y_preds[task_id]) for task_id in range(self.n_tasks)]
         self.train_ops_tf = [tf.train.AdamOptimizer(self.lr_tf).minimize(
             self.losses_tf[task_id]) for task_id in range(self.n_tasks)]
@@ -167,7 +178,9 @@ class MTN(object):
         self.saver = tf.train.Saver(max_to_keep=1)
 
         # Define the Tensorflow session, and its initializer op.
-        self.sess = tf.Session() self.init_op = tf.global_variables_initializer() self.sess.run(self.init_op)
+        self.sess = tf.Session()
+        self.init_op = tf.global_variables_initializer()
+        self.sess.run(self.init_op)
 
     def close(self):
         """ Close the session and reset the graph. Note: this
@@ -195,9 +208,10 @@ class MTN(object):
             x = rescale(x, self.scalers_x, task_ids, direction=0)
         except NotFittedError:
             print('Warning: scalers are not fitted.')
-        y_pred = self.sess.run(self.y_pred, {self.x_tf: x})
+        y_pred = self.sess.run(self.y_preds, {self.x_tf: x})
         # Extract outputs for each task.
-        y_pred = y_pred[:, task_ids.reshape(-1, 1)]
+        y_pred = [y_pred[task_id][data_id] for (data_id, task_id) in
+                enumerate(task_ids)]
         y_pred = rescale(y_pred, self.scalers_y, task_ids, direction=1)
         return y_pred
 
@@ -220,8 +234,7 @@ class MTN(object):
             max_epochs: Max number of training epochs. Each epoch goes
                 through the whole dataset (possibly leaving out
                 mod(x.shape[0], batch_size) data).
-            min_epochs: Do at least this many epochs (even if max_time
-                already passed).
+            min_epochs: Do at least this many epochs.
             batch_size: Training batch size.
             max_nonimprovs: Number of epochs allowed without improving
                 the validation score before quitting.
@@ -238,7 +251,7 @@ class MTN(object):
             raise ValueError('Number of tasks not consistent with data.')
         # Split data into a training and validation set.
         n_samples = [x_task.shape[0] for x_task in x]
-        n_val = [int(ns * .1) ns in n_samples]
+        n_val = [int(ns * .1) for ns in n_samples]
         ids_perm = [np.random.permutation(ns) for ns in n_samples]
         self.valid_ids = [ids_perm[task_id][:n_val[task_id]] for
                 task_id in range(self.n_tasks)]
@@ -266,8 +279,8 @@ class MTN(object):
                 for task_id in range(self.n_tasks)]
 
         # Train the neural net.
-        tr_losses = np.zeros(max_epochs, self.n_tasks)
-        val_losses = np.zeros(max_epochs, self.n_tasks)
+        tr_losses = np.zeros((max_epochs, self.n_tasks))
+        val_losses = np.zeros((max_epochs, self.n_tasks))
         best_val = np.inf
         start_time = time.time()
         for epoch_id in range(max_epochs):
@@ -279,7 +292,7 @@ class MTN(object):
                     self.losses_tf[task_id],
                     {self.x_tf: x_tr[task_id][batch_ids],
                      self.ys_tf[task_id]: y_tr[task_id][batch_ids]})
-                self.sess.run(self.train_ops_tf[train_id],
+                self.sess.run(self.train_ops_tf[task_id],
                               {self.x_tf: x_tr[task_id][batch_ids],
                                self.ys_tf[task_id]: y_tr[task_id][batch_ids],
                                self.lr_tf: lr})
@@ -296,26 +309,26 @@ class MTN(object):
                 model_path = self.saver.save(
                     self.sess, self.tmpfile.name)
 
-        tr_time = time.time() - start_time
-        if nn_verbose:
-            sys.stdout.write(('\rTraining epoch {}, time {}s.'
-                '\nTr loss {:.4g} [{}].'
-                '\nVal loss {:.4g} [{}], best val {:.4g}.'
-                ).format(epoch_id, int(tr_time),
-                tr_losses[epoch_id].mean(), tr_losses[epoch_id],
-                val_losses[epoch_id].mean(), val_losses[epoch_id], best_val))
-            sys.stdout.flush()
-        # Finish training if:
-        #   1) min_epochs are done, and
-        #   2a) either we're out of time, or
-        #   2b) there was no validation score
-        #       improvement for max_nonimprovs epochs.
-        if (epoch_id >= min_epochs and (time.time() - start_time > max_time
-            or epoch_id - last_improved > max_nonimprovs)):
-            break
+            tr_time = time.time() - start_time
+            if mtn_verbose:
+                sys.stdout.write(('\nTraining epoch {}, time {}s.'
+                    '\nTr loss {:.4g} [{}].'
+                    '\nVal loss {:.4g} [{}], best val {:.4g}.'
+                    ).format(epoch_id, int(tr_time),
+                    tr_losses[epoch_id].mean(), tr_losses[epoch_id],
+                    val_losses[epoch_id].mean(), val_losses[epoch_id], best_val))
+                sys.stdout.flush()
+            # Finish training if:
+            #   1) min_epochs are done, and
+            #   2a) either we're out of time, or
+            #   2b) there was no validation score
+            #       improvement for max_nonimprovs epochs.
+            if (epoch_id >= min_epochs or epoch_id
+                    - last_improved > max_nonimprovs):
+                    break
 
         self.saver.restore(self.sess, model_path)
-        if nn_verbose:
+        if mtn_verbose:
             print('Trainig done in {} epochs, {}s. Total validation loss {:.4g}.'.format(
                 epoch_id, tr_time, best_val))
         return tr_losses, val_losses
@@ -329,37 +342,45 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     
     n_tasks = 4
+    n_epochs = 100
     # Make data: X is a list of datasets, each with the same coordinates
     # but potentially 1) different n_samples and 2) different output tasks in Y.
-    X = [np.random.uniform(low=0, high=1,
-        size=(np.random.randint(50, 1000), 10))
+    X = [np.random.uniform(low=0, high=1, size=(100, 10000))
             for _ in range(n_tasks)]
-    Y = [np.sum(X[0][:, ::2] ** 2, axis=1, keepdims=True) +
-            np.random.rand(X[0].shape[0], 1) * .1,
-         np.sum(X[1][:, ::2] ** 2 + np.random.rand(X[1].shape[0],
-             X[0].shape[1]//2) * .1,
-             axis=1, keepdims=True),
-         np.sum(np.log(X[2][:, ::2]) ** 2 + np.random.randn(X[2].shape[0],
-             X[0].shape[1]//2) * .001,
-             axis=1, keepdims=True),
-         np.tanh(np.sum(np.log(X[3][:, ::2] + 2), axis=1, keepdims=True) + 
-             np.random.randn(X[3].shape[0], 1))]
+
+    def ftrs(x):
+        f1 = np.sum(x**2 > .1, axis=1, keepdims=True)
+        f2 = np.sqrt(np.sum(x, axis=1, keepdims=True))
+        f3 = np.min(np.exp(x), axis=1, keepdims=True)
+        f4 = np.mean(x, axis=1, keepdims=True)
+        return np.hstack([f1, f2, f3, f4])
+
+    Y = [np.mean(ftrs(X[0]) ** 2, axis=1, keepdims=True)
+            / np.random.rand(X[0].shape[0], 1) * .1,
+         np.prod(np.log(ftrs(X[1]) + 1), axis=1, keepdims=True)
+            + np.tanh(np.random.randn(X[1].shape[0], 1)),
+         np.sum((ftrs(X[2]) + ftrs(X[2])**2) / np.tanh(ftrs(X[2])),
+             axis=1, keepdims=True) * np.exp(np.random.randn(X[2].shape[0], 1)),
+         np.prod(ftrs(X[3]), axis=1, keepdims=True) * np.random.rand(X[3].shape[0], 1)]
 
     # Train a multi-task network.
-    mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks)
-    mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3)
+    mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks,
+            shared_arch=[128, 128, 128], task_arch=[128, 128, 128])
+    mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3,
+            min_epochs=n_epochs, max_nonimprovs=n_epochs)
 
     # Train a single nn for each task, for comparison.
     nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1) for _ in range(n_tasks)]
     for task_id in range(n_tasks):
-        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3)
+        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3,
+                arch=[128]*6, min_epochs=n_epochs, max_nonimprovs=n_epochs)
 
     # Compare the results.
     errs_mtn = []
     errs_nn = []
     for task_id in range(n_tasks):
         mtnpred = mtnet.predict(X[task_id],
-                task_ids=[task_id] * X[task_id].shape[0])
+                task_ids=np.array([task_id] * X[task_id].shape[0]))
         nnpred = nnets[task_id].predict(X[task_id])
         errs_mtn.append(np.mean((mtnpred - Y[task_id])**2))
         errs_nn.append(np.mean((nnpred - Y[task_id])**2))
@@ -368,6 +389,7 @@ if __name__=="__main__":
     plt.xlabel('Task ID')
     plt.ylabel('Error')
     plt.title('MTN error to NN error ratio')
+    #plt.bar(np.arange(n_tasks), np.array(errs_mtn))
     plt.bar(np.arange(n_tasks), np.array(errs_mtn) / np.array(errs_nn), width=.8)
     plt.axhline(y=1)
     plt.show()
