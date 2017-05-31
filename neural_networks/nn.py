@@ -7,7 +7,7 @@ from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 
 
-def define_nn(x_tf, y_dim, Ws, bs, keep_prob, tied_covar=False):
+def define_nn(x_tf, y_dim, Ws, bs, keep_prob):
     """ Define a Neural Network.
 
     The architecture of the network is deifned by the Ws, list of weight

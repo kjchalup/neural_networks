@@ -42,7 +42,10 @@ def define_mtn(x: tf.placeholder,
                W_shared: List[tf.placeholder],
                b_shared: List[tf.placeholder],
                W_tasks: List[List[tf.Variable]],
-               b_tasks: List[List[tf.Variable]]) -> List[tf.Tensor]:
+               b_tasks: List[List[tf.Variable]],
+               keep_prob: tf.placeholder,
+               phase: tf.placeholder, 
+               batch_norm: bool) -> List[tf.Tensor]:
     """ Define a Multi-Task Network in Tensorflow.
 
     Args:
@@ -52,6 +55,9 @@ def define_mtn(x: tf.placeholder,
         b_shared: Biases following x.
         W_tasks: Task-specific hidden layers.
         b_tasks: Task-specific biases.
+        keep_prob: Probability of keeping a unit on (for dropout).
+        phase: Indicates whether we're training or not (for batch norm).
+        batch_norm: If True, use batch normalization.
 
     Returns:
         y_pred: List of output tensors, one per task.
@@ -69,19 +75,35 @@ def define_mtn(x: tf.placeholder,
     with tf.name_scope('sharedhidden0'):
         out = tf.add(tf.matmul(x, W_shared[0]), b_shared[0])
     for layer_id, (W, b) in enumerate(zip(W_shared[1:], b_shared[1:])):
-        with tf.name_scope('sharedhidden{}'.format(layer_id)):
+        with tf.name_scope('sharedhidden{}'.format(layer_id+1)):
+            if batch_norm:
+                out = tf.contrib.layers.batch_norm(out, 
+                        center=True, scale=True, is_training=phase)
             out = nonlin(out)
+            out = tf.nn.dropout(out, keep_prob=keep_prob)
             out = tf.add(tf.matmul(out, W), b)
 
     # Create the task-specific layers.
     y_preds = []
     for task_id in range(len(y_dims)):
-        out_s = out
-        for layer_id, (W, b) in enumerate(
-                zip(W_tasks[task_id], b_tasks[task_id])):
-            with tf.name_scope('task{}hidden{}'.format(task_id, layer_id)):
+        with tf.name_scope('task{}hidden0'.format(task_id)):
+            if batch_norm:
+                out_s = tf.contrib.layers.batch_norm(out, 
+                        center=True, scale=True, is_training=phase)
                 out_s = nonlin(out_s)
-                out_s = tf.add(tf.matmul(out, W), b)
+            else:
+                out_s = nonlin(out)
+            out_s = tf.nn.dropout(out_s, keep_prob=keep_prob)
+            out_s = tf.add(tf.matmul(out_s, W_tasks[task_id][0]), b_tasks[task_id][0])
+        for layer_id, (W, b) in enumerate(
+                zip(W_tasks[task_id][1:], b_tasks[task_id][1:])):
+            with tf.name_scope('task{}hidden{}'.format(task_id, layer_id+1)):
+                if batch_norm:
+                    out_s = tf.contrib.layers.batch_norm(out_s, 
+                            center=True, scale=True, is_training=phase)
+                out_s = nonlin(out_s)
+                out_s = tf.nn.dropout(out_s, keep_prob=keep_prob)
+                out_s = tf.add(tf.matmul(out_s, W), b)
         y_preds.append(out_s)
 
     return y_preds
@@ -93,7 +115,8 @@ class MTN(object):
             x_dim: int,
             y_dims: List[int],
             shared_arch: List[int],
-            task_arch: List[int]):
+            task_arch: List[int],
+            batch_norm: bool):
         """ A Multi-Task Network. 
 
         Creates a neural net that can be trained to perform `n_tasks`
@@ -111,6 +134,7 @@ class MTN(object):
             y_dims: Output task dimensionalities.
             shared_arch: Weight numbers in shared hidden layers.
             task_arch: Weight numbers in each of the task-specific layers.
+            batch_norm: If True, use batch normalization.
         """
         self.n_tasks = len(y_dims)
         self.x_dim = x_dim
@@ -122,46 +146,51 @@ class MTN(object):
         self.x_tf = tf.placeholder(tf.float32, [None, x_dim], name='X')
         self.ys_tf = [tf.placeholder(tf.float32, [None, y_dims[task_id]],
             name='Y_{}'.format(task_id)) for task_id in range(self.n_tasks)]
+        self.keep_prob_tf = tf.placeholder(tf.float32)
+        self.phase_tf = tf.placeholder(tf.bool)
 
-        # Initialize MTN weights.
+        # Initialize shared weights:
+        # 1) The first shared hidden layer.
         self.W_shared = [tf.truncated_normal([
             x_dim, shared_arch[0]], stddev=1./x_dim, dtype=tf.float32)]
+        # 2) Remaining shared hidden layers.
         for layer_id in range(len(shared_arch)-1):
             self.W_shared.append(tf.truncated_normal(
                 [shared_arch[layer_id], shared_arch[layer_id+1]],
                 stddev=1. / shared_arch[layer_id], dtype=tf.float32))
         self.W_shared = [tf.Variable(W_init) for W_init in self.W_shared]
-
+        # 3) Shared biases.
         self.b_shared = [tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
                 for _ in shared_arch]
 
+        # Initialize task-specific weights.
+        # 1) First task-specific layer (one for each task).
         self.W_tasks = [[tf.truncated_normal([
             shared_arch[-1], task_arch[0]],
             stddev=1./x_dim, dtype=tf.float32)]
             for _ in range(self.n_tasks)]
-
+        # 2) Remaining task-specific layers (one copy of each per task).
         for layer_id in range(len(task_arch)-1):
             for task_id in range(self.n_tasks):
                 self.W_tasks[task_id].append(tf.truncated_normal(
                     [task_arch[layer_id], task_arch[layer_id+1]],
                     stddev=1. / task_arch[layer_id], dtype=tf.float32))
-
+        # 3) Finally, make the output layer weights.
         for task_id in range(self.n_tasks):
             self.W_tasks[task_id].append(tf.truncated_normal(
                 [task_arch[-1], self.y_dims[task_id]],
                 stddev=1. / task_arch[-1], dtype=tf.float32))
-
         for task_id in range(self.n_tasks):
             self.W_tasks[task_id] = [tf.Variable(W_init)
                     for W_init in self.W_tasks[task_id]]
-
+        # Task-specific biases.
         self.b_tasks = [[tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
                 for _ in self.W_tasks[task_id]] for task_id in range(self.n_tasks)]
-
+        
         # Define the neural networks.
         self.y_preds = define_mtn(
             self.x_tf, self.y_dims, self.W_shared, self.b_shared,
-            self.W_tasks, self.b_tasks)
+            self.W_tasks, self.b_tasks, self.keep_prob_tf, self.phase_tf, batch_norm)
 
         # Define the mutli-task loss and training ops.
         self.losses_tf = [tf.losses.mean_squared_error(self.ys_tf[task_id],
@@ -179,6 +208,7 @@ class MTN(object):
 
         # Define the Tensorflow session, and its initializer op.
         self.sess = tf.Session()
+        #writer = tf.summary.FileWriter('logs', self.sess.graph)
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
 
@@ -208,7 +238,8 @@ class MTN(object):
             x = rescale(x, self.scalers_x, task_ids, direction=0)
         except NotFittedError:
             print('Warning: scalers are not fitted.')
-        y_pred = self.sess.run(self.y_preds, {self.x_tf: x})
+        y_pred = self.sess.run(self.y_preds,
+                {self.x_tf: x, self.keep_prob_tf: 1., self.phase_tf: False})
         # Extract outputs for each task.
         y_pred = [y_pred[task_id][data_id] for (data_id, task_id) in
                 enumerate(task_ids)]
@@ -223,7 +254,8 @@ class MTN(object):
             max_epochs: int = 1000,
             min_epochs: int = 10,
             batch_size: int = 32,
-            max_nonimprovs: int = 30) -> (np.ndarray, np.ndarray):
+            max_nonimprovs: int = 30,
+            dropout_keep_prob: float = 1.) -> (np.ndarray, np.ndarray):
         """ Train a Multi-Task Network.
 
         Args:
@@ -238,6 +270,7 @@ class MTN(object):
             batch_size: Training batch size.
             max_nonimprovs: Number of epochs allowed without improving
                 the validation score before quitting.
+            dropout_keep_prob: Probability of keeping a unit on in Dropout.
 
         Returns:
             tr_losses (num_epochs,): Training errors (zero-padded).
@@ -257,13 +290,13 @@ class MTN(object):
                 task_id in range(self.n_tasks)]
 
         # Split data into validation and training.
-        x_val = [x[task_id][self.valid_ids[task_id]]
-                for task_id in range(self.n_tasks)]
-        y_val = [y[task_id][self.valid_ids[task_id]]
-                for task_id in range(self.n_tasks)]
         x_tr = [x[task_id][ids_perm[task_id][n_val[task_id]:]]
                 for task_id in range(self.n_tasks)]
         y_tr = [y[task_id][ids_perm[task_id][n_val[task_id]:]]
+                for task_id in range(self.n_tasks)]
+        x_val = [x[task_id][self.valid_ids[task_id]]
+                for task_id in range(self.n_tasks)]
+        y_val = [y[task_id][self.valid_ids[task_id]]
                 for task_id in range(self.n_tasks)]
 
         # Fit scalers on the training data and rescale training data.
@@ -291,14 +324,20 @@ class MTN(object):
                 tr_loss = self.sess.run(
                     self.losses_tf[task_id],
                     {self.x_tf: x_tr[task_id][batch_ids],
-                     self.ys_tf[task_id]: y_tr[task_id][batch_ids]})
+                     self.ys_tf[task_id]: y_tr[task_id][batch_ids],
+                     self.keep_prob_tf: 1.,
+                     self.phase_tf: False})
                 self.sess.run(self.train_ops_tf[task_id],
                               {self.x_tf: x_tr[task_id][batch_ids],
                                self.ys_tf[task_id]: y_tr[task_id][batch_ids],
+                               self.keep_prob_tf: dropout_keep_prob,
+                               self.phase_tf: True,
                                self.lr_tf: lr})
                 val_loss = self.sess.run(self.losses_tf[task_id],
                                          {self.x_tf: x_val[task_id],
-                                          self.ys_tf[task_id]: y_val[task_id]})
+                                          self.ys_tf[task_id]: y_val[task_id],
+                                          self.keep_prob_tf: 1.,
+                                          self.phase_tf: False})
                 tr_losses[epoch_id][task_id] = tr_loss
                 val_losses[epoch_id][task_id] = val_loss
 
@@ -341,34 +380,28 @@ if __name__=="__main__":
     from neural_networks import nn
     import matplotlib.pyplot as plt
     
-    n_tasks = 4
-    n_epochs = 100
+    n_tasks = 1
+    dim = 10
+    samples = 1000
+    n_epochs = 1000
     # Make data: X is a list of datasets, each with the same coordinates
     # but potentially 1) different n_samples and 2) different output tasks in Y.
-    X = [np.random.uniform(low=0, high=1, size=(100, 10000))
+    X = [np.random.uniform(low=-1, high=1, size=(samples, dim))
             for _ in range(n_tasks)]
 
-    def ftrs(x):
-        f1 = np.sum(x**2 > .1, axis=1, keepdims=True)
-        f2 = np.sqrt(np.sum(x, axis=1, keepdims=True))
-        f3 = np.min(np.exp(x), axis=1, keepdims=True)
-        f4 = np.mean(x, axis=1, keepdims=True)
-        return np.hstack([f1, f2, f3, f4])
-
-    Y = [np.mean(ftrs(X[0]) ** 2, axis=1, keepdims=True)
-            / np.random.rand(X[0].shape[0], 1) * .1,
-         np.prod(np.log(ftrs(X[1]) + 1), axis=1, keepdims=True)
-            + np.tanh(np.random.randn(X[1].shape[0], 1)),
-         np.sum((ftrs(X[2]) + ftrs(X[2])**2) / np.tanh(ftrs(X[2])),
-             axis=1, keepdims=True) * np.exp(np.random.randn(X[2].shape[0], 1)),
-         np.prod(ftrs(X[3]), axis=1, keepdims=True) * np.random.rand(X[3].shape[0], 1)]
+    def make_y(x, mat):
+        x = np.matmul(x, mat)
+        x = x**2
+        return np.matmul(x, np.random.randn(x.shape[1], 1))
+    
+    ftr_mat = np.random.randn(dim, dim)
+    Y = [make_y(X[task_id], ftr_mat) for task_id in range(n_tasks)]
 
     # Train a multi-task network.
     mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks,
-            shared_arch=[128, 128, 128], task_arch=[128, 128, 128])
-    mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3,
-            min_epochs=n_epochs, max_nonimprovs=n_epochs)
-
+            shared_arch=[128]*3, task_arch=[128] * 3, batch_norm=False)
+    mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3 / n_tasks,
+            min_epochs=n_epochs * n_tasks, max_nonimprovs=n_epochs)
     # Train a single nn for each task, for comparison.
     nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1) for _ in range(n_tasks)]
     for task_id in range(n_tasks):
