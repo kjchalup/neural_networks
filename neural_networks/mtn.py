@@ -318,6 +318,8 @@ class MTN(object):
         start_time = time.time()
         for epoch_id in range(max_epochs):
             # On each epoch, do a batch of each task.
+            ps = val_losses[epoch_id-1]
+            task_id = np.random.choice(n_tasks, p=
             for task_id in np.random.permutation(np.arange(n_tasks)):
                 batch_ids = np.random.choice(n_samples[task_id]
                         -n_val[task_id], batch_size, replace=False)
@@ -399,7 +401,7 @@ if __name__=="__main__":
 
     # Train a multi-task network.
     mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks,
-            shared_arch=[128], task_arch=[128], batch_norm=False)
+            shared_arch=[128]*2, task_arch=[128]*2, batch_norm=True)
     mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3 / n_tasks,
             min_epochs=n_epochs * n_tasks, max_nonimprovs=n_epochs)
 
