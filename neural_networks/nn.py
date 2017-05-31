@@ -116,6 +116,7 @@ class NN(object):
 
         # Define the Tensorflow session, and its initializer op.
         self.sess = tf.Session()
+        writer = tf.summary.FileWriter('logs', self.sess.graph)
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
 
@@ -190,23 +191,19 @@ class NN(object):
         tr_losses = np.zeros(max_epochs)
         val_losses = np.zeros(max_epochs)
         best_val = np.inf
-        batch_num = 1
         start_time = time.time()
         for epoch_id in range(max_epochs):
-            tr_loss = 0
-            for batch_id in range(batch_num):
-                batch_ids = np.random.choice(n_samples-n_val,
-                        batch_size, replace=False)
-                tr_loss += self.sess.run(
-                    self.loss_tf, {self.x_tf: x_tr[batch_ids],
-                                   self.y_tf: y_tr[batch_ids],
-                                   self.keep_prob: 1.})
-                self.sess.run(self.train_op_tf,
-                              {self.x_tf: x_tr[batch_ids],
+            batch_ids = np.random.choice(n_samples-n_val,
+                    batch_size, replace=False)
+            tr_loss = self.sess.run(
+                self.loss_tf, {self.x_tf: x_tr[batch_ids],
                                self.y_tf: y_tr[batch_ids],
-                               self.keep_prob: dropout_keep_prob,
-                               self.lr_tf: lr})
-            tr_loss /= batch_num
+                               self.keep_prob: 1.})
+            self.sess.run(self.train_op_tf,
+                          {self.x_tf: x_tr[batch_ids],
+                           self.y_tf: y_tr[batch_ids],
+                           self.keep_prob: dropout_keep_prob,
+                           self.lr_tf: lr})
             val_loss = self.sess.run(self.loss_tf,
                                      {self.x_tf: x_val,
                                       self.y_tf: y_val,

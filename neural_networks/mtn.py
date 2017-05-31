@@ -380,9 +380,9 @@ if __name__=="__main__":
     from neural_networks import nn
     import matplotlib.pyplot as plt
     
-    n_tasks = 1
+    n_tasks = 10
     dim = 10
-    samples = 1000
+    samples = 100
     n_epochs = 1000
     # Make data: X is a list of datasets, each with the same coordinates
     # but potentially 1) different n_samples and 2) different output tasks in Y.
@@ -399,14 +399,15 @@ if __name__=="__main__":
 
     # Train a multi-task network.
     mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks,
-            shared_arch=[128]*3, task_arch=[128] * 3, batch_norm=False)
+            shared_arch=[128], task_arch=[128], batch_norm=False)
     mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3 / n_tasks,
             min_epochs=n_epochs * n_tasks, max_nonimprovs=n_epochs)
+
     # Train a single nn for each task, for comparison.
-    nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1) for _ in range(n_tasks)]
+    nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1, arch=[128]*2) for _ in range(n_tasks)]
     for task_id in range(n_tasks):
         nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3,
-                arch=[128]*6, min_epochs=n_epochs, max_nonimprovs=n_epochs)
+                min_epochs=n_epochs, max_nonimprovs=n_epochs)
 
     # Compare the results.
     errs_mtn = []
