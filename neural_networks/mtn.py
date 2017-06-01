@@ -319,29 +319,29 @@ class MTN(object):
         for epoch_id in range(max_epochs):
             # On each epoch, do a batch of each task.
             ps = val_losses[epoch_id-1]
-            task_id = np.random.choice(n_tasks, p=
             for task_id in np.random.permutation(np.arange(n_tasks)):
-                batch_ids = np.random.choice(n_samples[task_id]
-                        -n_val[task_id], batch_size, replace=False)
-                tr_loss = self.sess.run(
-                    self.losses_tf[task_id],
-                    {self.x_tf: x_tr[task_id][batch_ids],
-                     self.ys_tf[task_id]: y_tr[task_id][batch_ids],
-                     self.keep_prob_tf: 1.,
-                     self.phase_tf: False})
-                self.sess.run(self.train_ops_tf[task_id],
-                              {self.x_tf: x_tr[task_id][batch_ids],
-                               self.ys_tf[task_id]: y_tr[task_id][batch_ids],
-                               self.keep_prob_tf: dropout_keep_prob,
-                               self.phase_tf: True,
-                               self.lr_tf: lr})
-                val_loss = self.sess.run(self.losses_tf[task_id],
-                                         {self.x_tf: x_val[task_id],
-                                          self.ys_tf[task_id]: y_val[task_id],
-                                          self.keep_prob_tf: 1.,
-                                          self.phase_tf: False})
-                tr_losses[epoch_id][task_id] = tr_loss
-                val_losses[epoch_id][task_id] = val_loss
+                for _ in range(10):
+                    batch_ids = np.random.choice(n_samples[task_id]
+                            -n_val[task_id], batch_size, replace=False)
+                    tr_loss = self.sess.run(
+                        self.losses_tf[task_id],
+                        {self.x_tf: x_tr[task_id][batch_ids],
+                         self.ys_tf[task_id]: y_tr[task_id][batch_ids],
+                         self.keep_prob_tf: 1.,
+                         self.phase_tf: False})
+                    self.sess.run(self.train_ops_tf[task_id],
+                                  {self.x_tf: x_tr[task_id][batch_ids],
+                                   self.ys_tf[task_id]: y_tr[task_id][batch_ids],
+                                   self.keep_prob_tf: dropout_keep_prob,
+                                   self.phase_tf: True,
+                                   self.lr_tf: lr})
+                    val_loss = self.sess.run(self.losses_tf[task_id],
+                                             {self.x_tf: x_val[task_id],
+                                              self.ys_tf[task_id]: y_val[task_id],
+                                              self.keep_prob_tf: 1.,
+                                              self.phase_tf: False})
+                    tr_losses[epoch_id][task_id] = tr_loss
+                    val_losses[epoch_id][task_id] = val_loss
 
             # Average losses of the tasks.
             if np.mean(val_losses[epoch_id]) < best_val:
@@ -374,6 +374,22 @@ class MTN(object):
                 epoch_id, tr_time, best_val))
         return tr_losses, val_losses
 
+def make_data(n_samples=100, dim=100):
+    projection_mat = np.random.uniform(low=-1, high=1, size=(2, dim))
+    while True:
+        # Sample points on a circle and project up.
+        x_circ = np.random.uniform(low=0, high=2*np.pi, size=(n_samples, 1))
+        X = np.hstack([np.cos(x_circ), np.sin(x_circ)])
+        X = np.matmul(X, projection_mat)
+        X = np.sin(np.log(np.abs(X))**2)
+        # Outputs are a randomized, noisy function on the circle.
+        Y = x_circ + np.random.randn(n_samples, 1) * .1
+        a = np.random.choice(np.arange(-4, 4))
+        b = np.random.uniform(low=-10, high=10)
+        c = np.random.uniform(low=-10, high=10)
+        Y = Y ** a * np.sin(b * np.abs(Y)) + c * Y
+        yield (X, Y)
+
 
 if __name__=="__main__":
     """ Check that everything works as expected. Should take several
@@ -382,34 +398,25 @@ if __name__=="__main__":
     from neural_networks import nn
     import matplotlib.pyplot as plt
     
-    n_tasks = 10
+    n_tasks = 100
     dim = 10
-    samples = 100
-    n_epochs = 1000
+    samples = 50
+    n_epochs = 100
     # Make data: X is a list of datasets, each with the same coordinates
     # but potentially 1) different n_samples and 2) different output tasks in Y.
-    X = [np.random.uniform(low=-1, high=1, size=(samples, dim))
-            for _ in range(n_tasks)]
-
-    def make_y(x, mat):
-        x = np.matmul(x, mat)
-        x = x**2
-        return np.matmul(x, np.random.randn(x.shape[1], 1))
-    
-    ftr_mat = np.random.randn(dim, dim)
-    Y = [make_y(X[task_id], ftr_mat) for task_id in range(n_tasks)]
+    X, Y = zip(*[next(make_data(samples, dim)) for _ in range(n_tasks)])
 
     # Train a multi-task network.
     mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks,
-            shared_arch=[128]*2, task_arch=[128]*2, batch_norm=True)
-    mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3 / n_tasks,
-            min_epochs=n_epochs * n_tasks, max_nonimprovs=n_epochs)
+            shared_arch=[32]*5, task_arch=[32]*5, batch_norm=False)
+    mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3, dropout_keep_prob=1.,
+            min_epochs=n_epochs * n_tasks, max_epochs=n_epochs * n_tasks)# max_nonimprovs=n_epochs)
 
     # Train a single nn for each task, for comparison.
     nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1, arch=[128]*2) for _ in range(n_tasks)]
     for task_id in range(n_tasks):
-        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3,
-                min_epochs=n_epochs, max_nonimprovs=n_epochs)
+        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-4,
+                min_epochs=n_epochs, max_epochs=n_epochs)# max_nonimprovs=n_epochs)
 
     # Compare the results.
     errs_mtn = []
