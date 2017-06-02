@@ -313,39 +313,43 @@ class MTN(object):
 
         # Train the neural net.
         tr_losses = np.zeros((max_epochs, self.n_tasks))
-        val_losses = np.zeros((max_epochs, self.n_tasks))
+        val_losses = np.zeros((max_epochs, self.n_tasks)) + np.inf
         best_val = np.inf
         start_time = time.time()
         for epoch_id in range(max_epochs):
             # On each epoch, do a batch of each task.
             ps = val_losses[epoch_id-1]
-            for task_id in np.random.permutation(np.arange(n_tasks)):
-                for _ in range(10):
-                    batch_ids = np.random.choice(n_samples[task_id]
-                            -n_val[task_id], batch_size, replace=False)
-                    tr_loss = self.sess.run(
-                        self.losses_tf[task_id],
-                        {self.x_tf: x_tr[task_id][batch_ids],
-                         self.ys_tf[task_id]: y_tr[task_id][batch_ids],
-                         self.keep_prob_tf: 1.,
-                         self.phase_tf: False})
-                    self.sess.run(self.train_ops_tf[task_id],
-                                  {self.x_tf: x_tr[task_id][batch_ids],
-                                   self.ys_tf[task_id]: y_tr[task_id][batch_ids],
-                                   self.keep_prob_tf: dropout_keep_prob,
-                                   self.phase_tf: True,
-                                   self.lr_tf: lr})
-                    val_loss = self.sess.run(self.losses_tf[task_id],
-                                             {self.x_tf: x_val[task_id],
-                                              self.ys_tf[task_id]: y_val[task_id],
-                                              self.keep_prob_tf: 1.,
-                                              self.phase_tf: False})
-                    tr_losses[epoch_id][task_id] = tr_loss
-                    val_losses[epoch_id][task_id] = val_loss
+            if np.random.rand() < .3 or np.isnan(ps).sum() > 0:
+                task_id = np.random.choice(n_tasks)
+            else:
+                task_id = np.random.choice(n_tasks, p=ps/np.sum(ps))
+            #for task_id in np.random.permutation(np.arange(n_tasks)):
+            batch_ids = np.random.choice(n_samples[task_id]
+                    -n_val[task_id], batch_size, replace=False)
+            tr_loss = self.sess.run(
+                self.losses_tf[task_id],
+                {self.x_tf: x_tr[task_id][batch_ids],
+                 self.ys_tf[task_id]: y_tr[task_id][batch_ids],
+                 self.keep_prob_tf: 1.,
+                 self.phase_tf: False})
+            self.sess.run(self.train_ops_tf[task_id],
+                          {self.x_tf: x_tr[task_id][batch_ids],
+                           self.ys_tf[task_id]: y_tr[task_id][batch_ids],
+                           self.keep_prob_tf: dropout_keep_prob,
+                           self.phase_tf: True,
+                           self.lr_tf: lr})
+            val_loss = self.sess.run(self.losses_tf[task_id],
+                                     {self.x_tf: x_val[task_id],
+                                      self.ys_tf[task_id]: y_val[task_id],
+                                      self.keep_prob_tf: 1.,
+                                      self.phase_tf: False})
+            tr_losses[epoch_id] = tr_losses[epoch_id-1]
+            val_losses[epoch_id] = val_losses[epoch_id-1]
+            tr_losses[epoch_id][task_id] = tr_loss
+            val_losses[epoch_id][task_id] = val_loss
 
             # Average losses of the tasks.
             if np.mean(val_losses[epoch_id]) < best_val:
-                last_improved = epoch_id
                 best_val = np.mean(val_losses[epoch_id])
                 model_path = self.saver.save(
                     self.sess, self.tmpfile.name)
@@ -359,14 +363,6 @@ class MTN(object):
                     tr_losses[epoch_id].mean(), tr_losses[epoch_id],
                     val_losses[epoch_id].mean(), val_losses[epoch_id], best_val))
                 sys.stdout.flush()
-            # Finish training if:
-            #   1) min_epochs are done, and
-            #   2a) either we're out of time, or
-            #   2b) there was no validation score
-            #       improvement for max_nonimprovs epochs.
-            if (epoch_id >= min_epochs or epoch_id
-                    - last_improved > max_nonimprovs):
-                    break
 
         self.saver.restore(self.sess, model_path)
         if mtn_verbose:
@@ -398,24 +394,24 @@ if __name__=="__main__":
     from neural_networks import nn
     import matplotlib.pyplot as plt
     
-    n_tasks = 100
+    n_tasks = 30
     dim = 10
-    samples = 50
-    n_epochs = 100
+    samples = 100
+    n_epochs = 1000
     # Make data: X is a list of datasets, each with the same coordinates
     # but potentially 1) different n_samples and 2) different output tasks in Y.
     X, Y = zip(*[next(make_data(samples, dim)) for _ in range(n_tasks)])
 
     # Train a multi-task network.
     mtnet = MTN(x_dim=X[0].shape[1], y_dims=[1] * n_tasks,
-            shared_arch=[32]*5, task_arch=[32]*5, batch_norm=False)
+            shared_arch=[128]*2, task_arch=[128]*2, batch_norm=False)
     mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3, dropout_keep_prob=1.,
-            min_epochs=n_epochs * n_tasks, max_epochs=n_epochs * n_tasks)# max_nonimprovs=n_epochs)
+            min_epochs=n_epochs, max_epochs=n_epochs)# max_nonimprovs=n_epochs)
 
     # Train a single nn for each task, for comparison.
     nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1, arch=[128]*2) for _ in range(n_tasks)]
     for task_id in range(n_tasks):
-        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-4,
+        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3,
                 min_epochs=n_epochs, max_epochs=n_epochs)# max_nonimprovs=n_epochs)
 
     # Compare the results.
