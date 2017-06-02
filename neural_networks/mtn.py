@@ -319,7 +319,9 @@ class MTN(object):
         for epoch_id in range(max_epochs):
             # On each epoch, do a batch of each task.
             ps = val_losses[epoch_id-1]
-            if np.random.rand() < .3 or np.isnan(ps).sum() > 0:
+            if np.isnan(ps).sum() > 0:
+                task_id = np.where(np.isnan(ps))[0][0]
+            elif np.random.rand() < .5:
                 task_id = np.random.choice(n_tasks)
             else:
                 task_id = np.random.choice(n_tasks, p=ps/np.sum(ps))
@@ -394,8 +396,8 @@ if __name__=="__main__":
     from neural_networks import nn
     import matplotlib.pyplot as plt
     
-    n_tasks = 30
-    dim = 10
+    n_tasks = 3
+    dim = 1000
     samples = 100
     n_epochs = 1000
     # Make data: X is a list of datasets, each with the same coordinates
@@ -407,28 +409,28 @@ if __name__=="__main__":
             shared_arch=[128]*2, task_arch=[128]*2, batch_norm=False)
     mtnet.fit(X, Y, mtn_verbose=True, lr=1e-3, dropout_keep_prob=1.,
             min_epochs=n_epochs, max_epochs=n_epochs)# max_nonimprovs=n_epochs)
+    errs_mtn = []
+    for task_id in range(n_tasks):
+        mtnpred = mtnet.predict(X[task_id], task_ids=np.array(
+            [task_id] * X[task_id].shape[0]))
+        errs_mtn.append(np.mean((mtnpred - Y[task_id])**2))
+    mtnet.close()
 
     # Train a single nn for each task, for comparison.
-    nnets = [nn.NN(x_dim=X[0].shape[1], y_dim=1, arch=[128]*2) for _ in range(n_tasks)]
-    for task_id in range(n_tasks):
-        nnets[task_id].fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3,
-                min_epochs=n_epochs, max_epochs=n_epochs)# max_nonimprovs=n_epochs)
-
-    # Compare the results.
-    errs_mtn = []
     errs_nn = []
     for task_id in range(n_tasks):
-        mtnpred = mtnet.predict(X[task_id],
-                task_ids=np.array([task_id] * X[task_id].shape[0]))
-        nnpred = nnets[task_id].predict(X[task_id])
-        errs_mtn.append(np.mean((mtnpred - Y[task_id])**2))
+        nnet = nn.NN(x_dim=X[0].shape[1], y_dim=1, arch=[128]*2)
+        nnet.fit(X[task_id], Y[task_id], nn_verbose=True, lr=1e-3,
+            min_epochs=n_epochs, max_epochs=n_epochs)
+        nnpred = nnet.predict(X[task_id])
         errs_nn.append(np.mean((nnpred - Y[task_id])**2))
+        nnet.restart()
 
     fig = plt.figure(figsize=(5, 5))
     plt.xlabel('Task ID')
     plt.ylabel('Error')
     plt.title('MTN error to NN error ratio')
-    #plt.bar(np.arange(n_tasks), np.array(errs_mtn))
-    plt.bar(np.arange(n_tasks), np.array(errs_mtn) / np.array(errs_nn), width=.8)
+    plt.bar(np.arange(n_tasks),
+            np.array(errs_mtn) / np.array(errs_nn), width=.8)
     plt.axhline(y=1)
     plt.show()
