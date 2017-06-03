@@ -1,13 +1,19 @@
 """ Neural network routines. """
 import sys
 import time
+from typing import List
+from tempfile import NamedTemporaryFile
+
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 
 
-def define_nn(x_tf, y_dim, Ws, bs, keep_prob):
+def define_nn(
+        x_tf: tf.placeholder,
+        arch: List[int],
+        keep_prob: tf.placeholder):
     """ Define a Neural Network.
 
     The architecture of the network is deifned by the Ws, list of weight
@@ -16,10 +22,8 @@ def define_nn(x_tf, y_dim, Ws, bs, keep_prob):
     Otherwise, use the relu.
 
     Args:
-        x_tf (n_samples, x_dim): Input data.
-        y_dim: Output data dimensionality.
-        Ws: List of weight tensors.
-        bs: List of bias tensors.
+        x_tf: Input data.
+        arch: Architecture, including output layer. 
         keep_prob: Dropout probability of keeping a unit on.
 
     Returns:
@@ -29,26 +33,22 @@ def define_nn(x_tf, y_dim, Ws, bs, keep_prob):
         ValueError: When the last weight tensor's output is not compatible
             with the input shape.
     """
-
-    out_dim = Ws[-1].get_shape().as_list()[1]
-    if out_dim != y_dim:
-        raise ValueError('NN output dimension is not '
-                         'compatible with output shape.')
-
-    if len(Ws) < 2:
-        nonlin = tf.nn.sigmoid
-    else:
-        nonlin = tf.nn.relu
-
-    with tf.name_scope('hidden0'):
-        out = tf.add(tf.matmul(x_tf, Ws[0]), bs[0])
-    for layer_id, (W, b) in enumerate(zip(Ws[1:], bs[1:])):
-        with tf.name_scope('hidden{}'.format(layer_id)):
-            out = nonlin(out)
-            out = tf.nn.dropout(out, keep_prob=keep_prob)
-            out = tf.add(tf.matmul(out, W), b)
-
-    return out
+    x_dim = x_tf.get_shape().as_list()[1]
+    y_pred = x_tf
+    with tf.variable_scope('nn'):
+        for layer_id in range(len(arch)):
+            n_in = x_dim if layer_id == 0 else arch[layer_id-1]
+            n_out = arch[layer_id]
+            with tf.variable_scope('layer{}'.format(layer_id)):
+                W = tf.get_variable('W', [n_in, n_out], tf.float32,
+                    tf.truncated_normal_initializer(
+                        stddev=1. / n_in, dtype=tf.float32))
+                b = tf.get_variable('b', [1, 1], tf.float32,
+                    tf.constant_initializer(0.))
+                y_pred = tf.add(tf.matmul(y_pred, W), b)
+                if layer_id < len(arch) - 1:
+                    y_pred = tf.nn.relu(y_pred)
+    return y_pred
 
 
 class NN(object):
@@ -65,45 +65,23 @@ class NN(object):
             of units in the NN's hidden layer.
     """
     def __init__(self, x_dim, y_dim, arch=[1024], **kwargs):
+        # Bookkeeping.
         self.arch = arch
         self.x_tf = tf.placeholder(
-            tf.float32, [None, x_dim], name='input_data')
+            tf.float32, [None, x_dim], name='inputs')
         self.y_tf = tf.placeholder(
-            tf.float32, [None, y_dim], name='output_data')
-        self.lr_tf = tf.placeholder(tf.float32, name='learning_rate')
+            tf.float32, [None, y_dim], name='outputs')
+        self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
+        self.keep_prob = tf.placeholder(tf.float32, name='dropout')
         self.y_dim = y_dim
 
-        # Initialize the weights.
-        if len(arch) > 0:
-            self.Ws = [tf.truncated_normal([
-                x_dim, self.arch[0]], stddev=1. / x_dim, dtype=tf.float32)]
-            for layer_id in range(1, len(arch)):
-                self.Ws.append(tf.truncated_normal(
-                    [arch[layer_id-1], arch[layer_id]],
-                    stddev=1. / arch[layer_id-1], dtype=tf.float32))
-            self.Ws.append(tf.truncated_normal(
-                [arch[-1], self.y_dim], stddev=1. / arch[-1], dtype=tf.float32))
-        else:
-            self.Ws = [tf.truncated_normal([x_dim, self.y_dim],
-                stddev=1. / x_dim, dtype=tf.float32)]
-        self.Ws = [tf.Variable(W_init) for W_init in self.Ws]
+        # Inference.
+        self.y_pred = define_nn(self.x_tf, arch + [y_dim], self.keep_prob)
 
-        # Initialize the biases.
-        self.bs = [tf.Variable(tf.zeros((1, 1)), dtype=tf.float32)
-                   for num_units in arch]
-        self.bs.append(tf.Variable(tf.zeros((1, 1)), dtype=tf.float32))
-
-        # Initialize dropout keep_prob.
-        self.keep_prob = tf.placeholder(tf.float32)
-
-        # Define the MDN outputs as a function of input data.
-        self.y_pred = define_nn(
-                self.x_tf, y_dim, self.Ws, self.bs, self.keep_prob)
-
-        # Define the loss function: MSE.
+        # Loss.
         self.loss_tf = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
 
-        # Define the optimizer.
+        # Training.
         self.train_op_tf = tf.train.AdamOptimizer(
             self.lr_tf).minimize(self.loss_tf)
 
@@ -112,11 +90,11 @@ class NN(object):
         self.scaler_y = StandardScaler()
 
         # Define the saver object for model persistence.
+        self.tmpfile = NamedTemporaryFile()
         self.saver = tf.train.Saver(max_to_keep=1)
 
         # Define the Tensorflow session, and its initializer op.
         self.sess = tf.Session()
-        writer = tf.summary.FileWriter('logs', self.sess.graph)
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
 
@@ -124,7 +102,6 @@ class NN(object):
         """ Close the session and reset the graph. Note: this
         will make this neural net unusable. """
         self.sess.close()
-        tf.reset_default_graph()
 
     def restart(self):
         """ Re-initialize the network. """
@@ -147,26 +124,18 @@ class NN(object):
         y_pred = self.sess.run(self.y_pred, {self.x_tf: x, self.keep_prob: 1.})
         return self.scaler_y.inverse_transform(y_pred)
 
-    def fit(self, x, y, max_epochs=1000, min_epochs=10, batch_size=32,
-            lr=1e-3, max_time=np.inf, nn_verbose=False,
-            max_nonimprovs=30, dropout_keep_prob=1., **kwargs):
+    def fit(self, x, y, epochs=1000, batch_size=32,
+            lr=1e-3, nn_verbose=False,
+            dropout_keep_prob=1., **kwargs):
         """ Train the MDN to maximize the data likelihood.
 
         Args:
             x (n_samples, x_dim): Input data.
             y (n_samples, y_dim): Output data.
-            max_epochs (int): Max number of training epochs. Each epoch goes
-                through the whole dataset (possibly leaving out
-                mod(x.shape[0], batch_size) data).
-            min_epochs (int): Do at least this many epochs (even if max_time
-                already passed).
+            epochs (int): How many batches to train for.
             batch_size (int): Training batch size.
             lr (float): Learning rate.
-            max_time (float): Maximum training time, in seconds. Training will
-                stop if max_time is up OR num_epochs is reached.
             nn_verbose (bool): Display training progress messages (or not).
-            max_nonimprovs (int): Number of epochs allowed without improving
-                the validation score before quitting.
             dropout_keep_prob (float): Probability of keeping a unit on.
 
         Returns:
@@ -188,11 +157,11 @@ class NN(object):
         y_val = self.scaler_y.transform(y_val)
 
         # Train the neural net.
-        tr_losses = np.zeros(max_epochs)
-        val_losses = np.zeros(max_epochs)
+        tr_losses = np.zeros(epochs)
+        val_losses = np.zeros(epochs)
         best_val = np.inf
         start_time = time.time()
-        for epoch_id in range(max_epochs):
+        for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
                     batch_size, replace=False)
             tr_loss = self.sess.run(
@@ -214,7 +183,7 @@ class NN(object):
                 last_improved = epoch_id
                 best_val = val_loss
                 model_path = self.saver.save(
-                    self.sess, './tmp')
+                    self.sess, self.tmpfile.name)
 
             tr_time = time.time() - start_time
             if nn_verbose:
@@ -223,14 +192,6 @@ class NN(object):
                               ).format(epoch_id, int(tr_time),
                                        tr_loss, val_loss, best_val))
                 sys.stdout.flush()
-            # Finish training if:
-            #   1) min_epochs are done, and
-            #   2a) either we're out of time, or
-            #   2b) there was no validation score
-            #       improvement for max_nonimprovs epochs.
-            if (epoch_id >= min_epochs and (time.time() - start_time > max_time
-                or epoch_id - last_improved > max_nonimprovs)):
-                break
 
         self.saver.restore(self.sess, model_path)
         if nn_verbose:
@@ -245,8 +206,9 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128, 128])
-    nn.fit(x, y, nn_verbose=True, lr=1e-2)
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128] * 2, epochs=10000)
+    nn.fit(x, y, nn_verbose=True, lr=1e-3)
     y_pred = nn.predict(x)
     plt.plot(x, y, x, y_pred)
+    plt.savefig('res.png')
     plt.show()

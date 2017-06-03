@@ -38,7 +38,6 @@ def define_ae(
     """
     x_dim = x_tf.get_shape().as_list()[1]
     nonlin = tf.nn.relu
-    #nonlin = tf.nn.tanh
     nonlin_inv = nonlin
     enc_tf = tf.placeholder(tf.float32, [None, arch[-1]], name='encoded_input')
     encode = x_tf
@@ -113,24 +112,25 @@ class Autoencoder(object):
             arch: Architecture of the encoder. The decoding
                 is symmetric.
         """
+        # Bookkeeping.
         self.arch = arch
         self.x_tf = tf.placeholder(tf.float32, [None, x_dim], name='input')
         self.y_tf = tf.placeholder(tf.float32, [None, x_dim], name='output')
         self.lr_tf = tf.placeholder(tf.float32, name='lr')
 
-        # Create the graph.
+        # Inference.
         self.encode_tf, self.decode_tf, self.predict_tf, self.enc_tf =\
                 define_ae(self.x_tf, self.arch)
 
-        # Define loss (MSE).
+        # Loss.
         self.loss_tf = tf.losses.mean_squared_error(
                 self.y_tf, self.predict_tf)
 
-        # Define the optimizer.
+        # Training.
         self.train_op_tf = tf.train.AdamOptimizer(
                 self.lr_tf).minimize(self.loss_tf)
 
-        # Use the minmax scaler, as decoder uses tanh.
+        # Use the minmax scaler, as decoder applies tanh on outputs.
         self.scaler_x = MinMaxScaler(feature_range=(-1, 1))
 
         # Define a saver object.
@@ -139,7 +139,7 @@ class Autoencoder(object):
 
         # Create the Tensorflow session and its initializer op.
         self.sess = tf.Session()
-        writer = tf.summary.FileWriter('logs', self.sess.graph)
+        #writer = tf.summary.FileWriter('logs', self.sess.graph)
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
 
@@ -147,7 +147,6 @@ class Autoencoder(object):
         """ Close the session and reset the graph. Note: this
         will make this neural net unusable. """
         self.sess.close()
-        tf.reset_default_graph()
 
     def restart(self):
         """ Re-initialize the network. """
@@ -239,8 +238,8 @@ if __name__=="__main__":
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     X = mnist.train.images
     Xts = mnist.test.images
-    ae = Autoencoder(x_dim=X.shape[1], arch=[128, 64, 32])
-    ae.fit(X, lr=1e-3, epochs=10000, n_type=None, batch_size=128)
+    ae = Autoencoder(x_dim=X.shape[1], arch=[128, 64, 32, 16, 8])
+    ae.fit(X, lr=1e-3, epochs=10000, batch_size=128, n_type=None, threshold=.2)
     Xts_pred = ae.decode(ae.encode(Xts))
     fig = plt.figure(figsize=(2, 10), facecolor='white')
     for im_id_id, im_id in enumerate(np.random.choice(Xts.shape[0], 10)):
