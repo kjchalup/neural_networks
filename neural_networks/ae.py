@@ -233,7 +233,7 @@ class Autoencoder(object):
 
 
 if __name__=="__main__":
-    """ Encode/decode MNIST digits. """
+    """ Encode/decode MNIST digits. Takes about 5min on a Titan X GPU. """
     import matplotlib.pyplot as plt
     from tensorflow.examples.tutorials.mnist import input_data
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
