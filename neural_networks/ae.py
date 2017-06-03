@@ -10,6 +10,18 @@ import numpy as np
 import tensorflow as tf
 
 
+def noise(x, n_type, **kwargs):
+    if n_type == 'gaussan':
+        n = np.random.randn(x.shape, kwargs['std'])
+        return x + n
+    elif n_type == 'masking':
+        x = np.array(x)
+        x[np.random.randn(*x.shape) < kwargs['threshold']] = 0
+        return x
+    else:
+        return x
+
+
 def define_ae(
         x_tf: (tf.placeholder, 'Input data.'),
         arch: (List[int], 'Encoder architecture.')):
@@ -21,11 +33,12 @@ def define_ae(
     Returns:
         encode: Tensofrlow encoding of x_tf.
         decode: Tensorflow decoding of encoded inputs.
+        predict: Tensorflow predictor (reconstructor).
         enc_tf: Tensorflow placeholder for encoded inputs.
     """
     x_dim = x_tf.get_shape().as_list()[1]
-    nonlin = tf.nn.tanh
-    #nonlin_inv = lambda x: .5 * tf.log((1 + x) / (1 - x))
+    nonlin = tf.nn.relu
+    #nonlin = tf.nn.tanh
     nonlin_inv = nonlin
     enc_tf = tf.placeholder(tf.float32, [None, arch[-1]], name='encoded_input')
     encode = x_tf
@@ -59,7 +72,10 @@ def define_ae(
                         'b_dec', [1, 1], tf.float32,
                         tf.constant_initializer(0.))
                 predict = tf.add(tf.matmul(predict, tf.transpose(W)), b)
-                predict = nonlin_inv(predict)
+                if layer_id == 0:
+                    predict = tf.nn.tanh(predict)
+                else:
+                    predict = nonlin_inv(predict)
 
         decode = enc_tf
         for layer_id in range(len(arch)):
@@ -69,8 +85,11 @@ def define_ae(
                     W = tf.get_variable('W')
                 with tf.variable_scope('Biases', reuse=True):
                     b = tf.get_variable('b_dec')
-                decode= tf.add(tf.matmul(decode, tf.transpose(W)), b)
-                decode = nonlin_inv(decode)
+                decode = tf.add(tf.matmul(decode, tf.transpose(W)), b)
+                if layer_id == 0:
+                    decode = tf.nn.tanh(decode)
+                else:
+                    decode = nonlin_inv(decode)
 
     return encode, decode, predict, enc_tf
 
@@ -82,17 +101,21 @@ class Autoencoder(object):
     initialize the autoencoder. Fit with the `fit` 
     method. Encode and decode with `encode` and `decode`
     methods.
-
-    Args:
-        x_dim: Input data dimensionality.
-        arch: Architecture of the encoder. The decoding
-            is symmetric.
     """
     def __init__(self,
-            x_dim: int,
-            arch: List[int] = [32]):
+            x_dim: (int, 'Input dimensionality.'),
+            arch: (List[int], 'Encoder architecture.') = 32):
+        """
+        A denoising autoencoder.
+
+        Args:
+            x_dim: Input data dimensionality.
+            arch: Architecture of the encoder. The decoding
+                is symmetric.
+        """
         self.arch = arch
         self.x_tf = tf.placeholder(tf.float32, [None, x_dim], name='input')
+        self.y_tf = tf.placeholder(tf.float32, [None, x_dim], name='output')
         self.lr_tf = tf.placeholder(tf.float32, name='lr')
 
         # Create the graph.
@@ -101,7 +124,7 @@ class Autoencoder(object):
 
         # Define loss (MSE).
         self.loss_tf = tf.losses.mean_squared_error(
-                self.x_tf, self.predict_tf)
+                self.y_tf, self.predict_tf)
 
         # Define the optimizer.
         self.train_op_tf = tf.train.AdamOptimizer(
@@ -136,6 +159,7 @@ class Autoencoder(object):
             lr: (float, 'Learning rate.') = 1e-3,
             batch_size: (int, 'Training minibatch size.') = 32,
             ae_verbose: (bool, 'Display training progress messages.') = True,
+            n_type: (str, 'Noise type (None, gauss, masking))') = None,
             **kwargs):
         
         # Split data into a training and validation set.
@@ -157,10 +181,16 @@ class Autoencoder(object):
             batch_ids = np.random.choice(n_samples-n_val,
                     batch_size, replace=False)
             tr_loss = self.sess.run(
-                self.loss_tf, {self.x_tf: x_tr[batch_ids]})
+                self.loss_tf, {
+                    self.x_tf: x_tr[batch_ids],
+                    self.y_tf: x_tr[batch_ids]})
             self.sess.run(self.train_op_tf,
-                          {self.x_tf: x_tr[batch_ids], self.lr_tf: lr})
-            val_loss = self.sess.run(self.loss_tf, {self.x_tf: x_val})
+                          {self.x_tf: noise(x_tr[batch_ids], n_type, **kwargs),
+                           self.y_tf: x_tr[batch_ids],
+                           self.lr_tf: lr})
+            val_loss = self.sess.run(self.loss_tf,
+                    {self.x_tf: x_val,
+                     self.y_tf: x_val})
             tr_losses[epoch_id] = tr_loss
             val_losses[epoch_id] = val_loss
             if val_loss < best_val:
@@ -201,6 +231,7 @@ class Autoencoder(object):
         decoded = self.sess.run(self.decode_tf, {self.enc_tf: y})
         return self.scaler_x.inverse_transform(decoded)
 
+
 if __name__=="__main__":
     """ Encode/decode MNIST digits. """
     import matplotlib.pyplot as plt
@@ -208,8 +239,8 @@ if __name__=="__main__":
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     X = mnist.train.images
     Xts = mnist.test.images
-    ae = Autoencoder(x_dim=X.shape[1], arch=[1024])
-    ae.fit(X, lr=1e-3, epochs=1000)
+    ae = Autoencoder(x_dim=X.shape[1], arch=[128, 64, 32])
+    ae.fit(X, lr=1e-3, epochs=10000, n_type=None, batch_size=128)
     Xts_pred = ae.decode(ae.encode(Xts))
     fig = plt.figure(figsize=(2, 10), facecolor='white')
     for im_id_id, im_id in enumerate(np.random.choice(Xts.shape[0], 10)):
