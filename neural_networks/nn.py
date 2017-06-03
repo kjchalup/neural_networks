@@ -13,7 +13,8 @@ import tensorflow as tf
 def define_nn(
         x_tf: tf.placeholder,
         arch: List[int],
-        keep_prob: tf.placeholder):
+        highway: bool = False,
+        keep_prob: tf.placeholder = 1.):
     """ Define a Neural Network.
 
     The architecture of the network is deifned by the Ws, list of weight
@@ -24,6 +25,7 @@ def define_nn(
     Args:
         x_tf: Input data.
         arch: Architecture, including output layer. 
+        highway: If True, add highway net gating.
         keep_prob: Dropout probability of keeping a unit on.
 
     Returns:
@@ -35,6 +37,12 @@ def define_nn(
     """
     x_dim = x_tf.get_shape().as_list()[1]
     y_pred = x_tf
+    if highway:
+        for layer_id in range(len(arch)-1):
+            if arch[layer_id] != arch[0]:
+                raise ValueError('Highway nets require all' 
+                    'layers to be the same size.')
+
     with tf.variable_scope('nn'):
         for layer_id in range(len(arch)):
             n_in = x_dim if layer_id == 0 else arch[layer_id-1]
@@ -45,7 +53,19 @@ def define_nn(
                         stddev=1. / n_in, dtype=tf.float32))
                 b = tf.get_variable('b', [1, 1], tf.float32,
                     tf.constant_initializer(0.))
-                y_pred = tf.add(tf.matmul(y_pred, W), b)
+                if highway and 0 < layer_id < len(arch) - 1:
+                    W_gate = tf.get_variable('W_gate', [n_in, n_out], tf.float32,
+                        tf.truncated_normal_initializer(
+                            stddev=1. / n_in, dtype=tf.float32))
+                    b_gate = tf.get_variable('b_gate', [1, 1], tf.float32,
+                        tf.constant_initializer(-3.))
+                    transform = tf.add(tf.matmul(y_pred, W_gate), b_gate)
+                    transform = tf.nn.sigmoid(transform)
+                    y_transform = tf.add(tf.matmul(y_pred, W), b)
+                    y_carry = y_pred
+                    y_pred = y_transform * transform + y_carry * (1 - transform)
+                else:
+                    y_pred = tf.add(tf.matmul(y_pred, W), b)
                 if layer_id < len(arch) - 1:
                     y_pred = tf.nn.relu(y_pred)
     return y_pred
@@ -63,8 +83,9 @@ class NN(object):
         y_dim: Output data dimensionality.
         arch: A list of integers, each corresponding to the number
             of units in the NN's hidden layer.
+        highway: If True, add highway-network connections.
     """
-    def __init__(self, x_dim, y_dim, arch=[1024], **kwargs):
+    def __init__(self, x_dim, y_dim, arch=[1024], highway=False, **kwargs):
         # Bookkeeping.
         self.arch = arch
         self.x_tf = tf.placeholder(
@@ -76,7 +97,7 @@ class NN(object):
         self.y_dim = y_dim
 
         # Inference.
-        self.y_pred = define_nn(self.x_tf, arch + [y_dim], self.keep_prob)
+        self.y_pred = define_nn(self.x_tf, arch + [y_dim], highway, self.keep_prob)
 
         # Loss.
         self.loss_tf = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
@@ -206,7 +227,7 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128] * 2, epochs=10000)
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[1024] * 4, highway=False)
     nn.fit(x, y, nn_verbose=True, lr=1e-3)
     y_pred = nn.predict(x)
     plt.plot(x, y, x, y_pred)
