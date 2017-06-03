@@ -9,68 +9,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 
-
-def define_nn(
-        x_tf: tf.placeholder,
-        arch: List[int],
-        highway: bool = False,
-        keep_prob: tf.placeholder = 1.):
-    """ Define a Neural Network.
-
-    The architecture of the network is deifned by the Ws, list of weight
-    matrices. The last matrix must be of shape (?, y_dim). If the number
-    of layers is lower than 3, use the sigmoid nonlinearity.
-    Otherwise, use the relu.
-
-    Args:
-        x_tf: Input data.
-        arch: Architecture, including output layer. 
-        highway: If True, add highway net gating.
-        keep_prob: Dropout probability of keeping a unit on.
-
-    Returns:
-        out: Predicted y.
-
-    Raises:
-        ValueError: When the last weight tensor's output is not compatible
-            with the input shape.
-    """
-    x_dim = x_tf.get_shape().as_list()[1]
-    y_pred = x_tf
-    if highway:
-        for layer_id in range(len(arch)-1):
-            if arch[layer_id] != arch[0]:
-                raise ValueError('Highway nets require all' 
-                    'layers to be the same size.')
-
-    with tf.variable_scope('nn'):
-        for layer_id in range(len(arch)):
-            n_in = x_dim if layer_id == 0 else arch[layer_id-1]
-            n_out = arch[layer_id]
-            with tf.variable_scope('layer{}'.format(layer_id)):
-                W = tf.get_variable('W', [n_in, n_out], tf.float32,
-                    tf.truncated_normal_initializer(
-                        stddev=1. / n_in, dtype=tf.float32))
-                b = tf.get_variable('b', [1, 1], tf.float32,
-                    tf.constant_initializer(0.))
-                if highway and 0 < layer_id < len(arch) - 1:
-                    W_gate = tf.get_variable('W_gate', [n_in, n_out], tf.float32,
-                        tf.truncated_normal_initializer(
-                            stddev=1. / n_in, dtype=tf.float32))
-                    b_gate = tf.get_variable('b_gate', [1, 1], tf.float32,
-                        tf.constant_initializer(-3.))
-                    transform = tf.add(tf.matmul(y_pred, W_gate), b_gate)
-                    transform = tf.nn.sigmoid(transform)
-                    y_transform = tf.add(tf.matmul(y_pred, W), b)
-                    y_carry = y_pred
-                    y_pred = y_transform * transform + y_carry * (1 - transform)
-                else:
-                    y_pred = tf.add(tf.matmul(y_pred, W), b)
-                if layer_id < len(arch) - 1:
-                    y_pred = tf.nn.relu(y_pred)
-    return y_pred
-
-
 class NN(object):
     """ A Neural Net object.
 
@@ -97,14 +35,13 @@ class NN(object):
         self.y_dim = y_dim
 
         # Inference.
-        self.y_pred = define_nn(self.x_tf, arch + [y_dim], highway, self.keep_prob)
+        self.y_pred = self.define_nn(arch + [y_dim], highway)
 
         # Loss.
-        self.loss_tf = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
+        self.loss_tf = self.define_loss()
 
         # Training.
-        self.train_op_tf = tf.train.AdamOptimizer(
-            self.lr_tf).minimize(self.loss_tf)
+        self.train_op_tf = self.define_training()
 
         # Define the data scaler.
         self.scaler_x = StandardScaler()
@@ -118,6 +55,69 @@ class NN(object):
         self.sess = tf.Session()
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
+
+    def define_nn(self,
+            arch: List[int],
+            highway: bool = False):
+        """ Define a Neural Network.
+
+        The architecture of the network is deifned by the Ws, list of weight
+        matrices. The last matrix must be of shape (?, y_dim). If the number
+        of layers is lower than 3, use the sigmoid nonlinearity.
+        Otherwise, use the relu.
+
+        Args:
+            arch: Architecture, including output layer. 
+            highway: If True, add highway net gating.
+
+        Returns:
+            out: Predicted y.
+
+        Raises:
+            ValueError: When the last weight tensor's output is not compatible
+                with the input shape.
+        """
+        x_dim = self.x_tf.get_shape().as_list()[1]
+        y_pred = self.x_tf
+        if highway:
+            for layer_id in range(len(arch)-1):
+                if arch[layer_id] != arch[0]:
+                    raise ValueError('Highway nets require all' 
+                        'layers to be the same size.')
+
+        with tf.variable_scope('nn'):
+            for layer_id in range(len(arch)):
+                n_in = x_dim if layer_id == 0 else arch[layer_id-1]
+                n_out = arch[layer_id]
+                with tf.variable_scope('layer{}'.format(layer_id)):
+                    W = tf.get_variable('W', [n_in, n_out], tf.float32,
+                        tf.truncated_normal_initializer(
+                            stddev=1. / n_in, dtype=tf.float32))
+                    b = tf.get_variable('b', [1, 1], tf.float32,
+                        tf.constant_initializer(0.))
+                    if highway and 0 < layer_id < len(arch) - 1:
+                        W_gate = tf.get_variable('W_gate', [n_in, n_out], tf.float32,
+                            tf.truncated_normal_initializer(
+                                stddev=1. / n_in, dtype=tf.float32))
+                        b_gate = tf.get_variable('b_gate', [1, 1], tf.float32,
+                            tf.constant_initializer(-3.))
+                        transform = tf.add(tf.matmul(y_pred, W_gate), b_gate)
+                        transform = tf.nn.sigmoid(transform)
+                        y_transform = tf.add(tf.matmul(y_pred, W), b)
+                        y_carry = y_pred
+                        y_pred = y_transform * transform + y_carry * (1 - transform)
+                    else:
+                        y_pred = tf.add(tf.matmul(y_pred, W), b)
+                    if layer_id < len(arch) - 1:
+                        y_pred = tf.nn.relu(y_pred)
+        return y_pred
+
+    def define_loss(self):
+        return tf.losses.mean_squared_error(self.y_tf, self.y_pred)
+
+    def define_training(self):
+        return tf.train.AdamOptimizer(
+                    self.lr_tf).minimize(self.loss_tf)
 
     def close(self):
         """ Close the session and reset the graph. Note: this
