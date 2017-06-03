@@ -21,11 +21,15 @@ class NN(object):
         y_dim: Output data dimensionality.
         arch: A list of integers, each corresponding to the number
             of units in the NN's hidden layer.
-        highway: If True, add highway-network connections.
+        ntype: 'plain', 'highway', or 'residual'.
+        name: Name prepended to all variables in the graph.
     """
-    def __init__(self, x_dim, y_dim, arch=[1024], highway=False, **kwargs):
+    def __init__(self, x_dim, y_dim, arch=[1024],
+            ntype='plain', name='nn', **kwargs):
         # Bookkeeping.
-        self.arch = arch
+        self.name = name
+        self.arch = arch + [y_dim]
+        self.ntype = ntype
         self.x_tf = tf.placeholder(
             tf.float32, [None, x_dim], name='inputs')
         self.y_tf = tf.placeholder(
@@ -33,9 +37,10 @@ class NN(object):
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
         self.keep_prob = tf.placeholder(tf.float32, name='dropout')
         self.y_dim = y_dim
+        self.is_training_tf = tf.placeholder(tf.bool, name='trainflag')
 
         # Inference.
-        self.y_pred = self.define_nn(arch + [y_dim], highway)
+        self.y_pred = self.define_nn()
 
         # Loss.
         self.loss_tf = self.define_loss()
@@ -43,32 +48,26 @@ class NN(object):
         # Training.
         self.train_op_tf = self.define_training()
 
-        # Define the data scaler.
-        self.scaler_x = StandardScaler()
-        self.scaler_y = StandardScaler()
-
         # Define the saver object for model persistence.
         self.tmpfile = NamedTemporaryFile()
         self.saver = tf.train.Saver(max_to_keep=1)
+
+        # Define the data scaler.
+        self.scaler_x, self.scaler_y = self.define_scalers()
 
         # Define the Tensorflow session, and its initializer op.
         self.sess = tf.Session()
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
+        tf.summary.FileWriter('logs', self.sess.graph)
 
-    def define_nn(self,
-            arch: List[int],
-            highway: bool = False):
+    def define_nn(self):
         """ Define a Neural Network.
 
         The architecture of the network is deifned by the Ws, list of weight
         matrices. The last matrix must be of shape (?, y_dim). If the number
         of layers is lower than 3, use the sigmoid nonlinearity.
         Otherwise, use the relu.
-
-        Args:
-            arch: Architecture, including output layer. 
-            highway: If True, add highway net gating.
 
         Returns:
             out: Predicted y.
@@ -79,37 +78,53 @@ class NN(object):
         """
         x_dim = self.x_tf.get_shape().as_list()[1]
         y_pred = self.x_tf
-        if highway:
-            for layer_id in range(len(arch)-1):
-                if arch[layer_id] != arch[0]:
-                    raise ValueError('Highway nets require all' 
-                        'layers to be the same size.')
+        init = tf.contrib.layers.xavier_initializer
+        fully_connected = tf.contrib.layers.fully_connected
 
-        with tf.variable_scope('nn'):
-            for layer_id in range(len(arch)):
-                n_in = x_dim if layer_id == 0 else arch[layer_id-1]
-                n_out = arch[layer_id]
-                with tf.variable_scope('layer{}'.format(layer_id)):
-                    W = tf.get_variable('W', [n_in, n_out], tf.float32,
-                        tf.truncated_normal_initializer(
-                            stddev=1. / n_in, dtype=tf.float32))
-                    b = tf.get_variable('b', [1, 1], tf.float32,
-                        tf.constant_initializer(0.))
-                    if highway and 0 < layer_id < len(arch) - 1:
-                        W_gate = tf.get_variable('W_gate', [n_in, n_out], tf.float32,
-                            tf.truncated_normal_initializer(
-                                stddev=1. / n_in, dtype=tf.float32))
-                        b_gate = tf.get_variable('b_gate', [1, 1], tf.float32,
-                            tf.constant_initializer(-3.))
-                        transform = tf.add(tf.matmul(y_pred, W_gate), b_gate)
-                        transform = tf.nn.sigmoid(transform)
-                        y_transform = tf.add(tf.matmul(y_pred, W), b)
-                        y_carry = y_pred
-                        y_pred = y_transform * transform + y_carry * (1 - transform)
-                    else:
-                        y_pred = tf.add(tf.matmul(y_pred, W), b)
-                    if layer_id < len(arch) - 1:
-                        y_pred = tf.nn.relu(y_pred)
+        if self.ntype != 'plain':
+            # Check that (for Highway and Residual nets) layers have equal size.
+            for layer_id in range(len(self.arch)-1):
+                if self.arch[layer_id] != self.arch[0]:
+                    raise ValueError('Highway and Residual nets require all' 
+                        'layers to be the same size.')
+            # Make sure the input has the same size too.
+            with tf.name_scope('reshape'):
+                y_pred = fully_connected(y_pred, self.arch[0],
+                    weights_initializer=init(), activation_fn=None)
+
+        for layer_id in range(len(self.arch)):
+            n_out = self.arch[layer_id]
+            with tf.variable_scope('layer{}'.format(layer_id)):
+                y_transform = y_pred
+
+                # Transform the input.
+                with tf.name_scope('transform'):
+                    if layer_id < len(self.arch) - 1:
+                        y_transform = tf.nn.relu(y_transform)
+                    y_transform = fully_connected(
+                        y_transform, n_out, activation_fn=None,
+                        weights_initializer=init())
+
+                # Propagate the original input in Residual and Highway nets.
+                if (layer_id < len(self.arch)-1 and self.ntype != 'plain'):
+                    if self.ntype == 'highway':
+                        with tf.name_scope('highway'):
+                            gate = fully_connected(y_pred, n_out,
+                                activation_fn=tf.nn.sigmoid,
+                                weights_initializer=init(),
+                                biases_initializer=tf.constant_initializer(-3.))
+                            y_pred = y_transform * gate + y_pred * (1 - gate)
+                    elif self.ntype == 'residual':
+                        with tf.name_scope('residual'):
+                            if layer_id < len(self.arch) - 1:
+                                y_transform = tf.nn.relu(y_transform)
+                            y_transform = fully_connected(
+                                y_transform, n_out, activation_fn=None,
+                                    weights_initializer=init())
+                            y_pred += y_transform
+                else:
+                    y_pred = y_transform
+
         return y_pred
 
     def define_loss(self):
@@ -119,10 +134,14 @@ class NN(object):
         return tf.train.AdamOptimizer(
                     self.lr_tf).minimize(self.loss_tf)
 
+    def define_scalers(self):
+        return StandardScaler(), StandardScaler()
+
     def close(self):
         """ Close the session and reset the graph. Note: this
         will make this neural net unusable. """
         self.sess.close()
+        tf.reset_default_graph()
 
     def restart(self):
         """ Re-initialize the network. """
@@ -142,7 +161,10 @@ class NN(object):
             x = self.scaler_x.transform(x)
         except NotFittedError:
             print('Warning: scalers are not fitted.')
-        y_pred = self.sess.run(self.y_pred, {self.x_tf: x, self.keep_prob: 1.})
+        y_pred = self.sess.run(self.y_pred,
+                {self.x_tf: x,
+                 self.keep_prob: 1.,
+                 self.is_training_tf: False})
         return self.scaler_y.inverse_transform(y_pred)
 
     def fit(self, x, y, epochs=1000, batch_size=32,
@@ -182,21 +204,27 @@ class NN(object):
         val_losses = np.zeros(epochs)
         best_val = np.inf
         start_time = time.time()
+        if batch_size > x_tr.shape[1]:
+            batch_size = n_samples-n_val
+
         for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
                     batch_size, replace=False)
             tr_loss = self.sess.run(
                 self.loss_tf, {self.x_tf: x_tr[batch_ids],
                                self.y_tf: y_tr[batch_ids],
+                               self.is_training_tf: False,
                                self.keep_prob: 1.})
             self.sess.run(self.train_op_tf,
                           {self.x_tf: x_tr[batch_ids],
                            self.y_tf: y_tr[batch_ids],
+                           self.is_training_tf: True,
                            self.keep_prob: dropout_keep_prob,
                            self.lr_tf: lr})
             val_loss = self.sess.run(self.loss_tf,
                                      {self.x_tf: x_val,
                                       self.y_tf: y_val,
+                                      self.is_training_tf: False,
                                       self.keep_prob: 1.})
             tr_losses[epoch_id] = tr_loss
             val_losses[epoch_id] = val_loss
@@ -227,9 +255,8 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[1024] * 4, highway=False)
-    nn.fit(x, y, nn_verbose=True, lr=1e-3)
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128]*10, ntype='residual')
+    nn.fit(x, y, nn_verbose=True, lr=1e-2)
     y_pred = nn.predict(x)
     plt.plot(x, y, x, y_pred)
     plt.savefig('res.png')
-    plt.show()
