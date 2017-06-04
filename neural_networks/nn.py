@@ -91,6 +91,7 @@ class NN(object):
             with tf.name_scope('reshape'):
                 y_pred = fully_connected(y_pred, self.arch[0],
                     weights_initializer=init(), activation_fn=None)
+                y_pred = tf.nn.dropout(y_pred, keep_prob=self.keep_prob)
 
         for layer_id in range(len(self.arch)):
             n_out = self.arch[layer_id]
@@ -101,6 +102,7 @@ class NN(object):
                 with tf.name_scope('transform'):
                     if layer_id < len(self.arch) - 1:
                         y_transform = tf.nn.relu(y_transform)
+                        y_transform = tf.nn.dropout(y_transform, keep_prob=self.keep_prob)
                     y_transform = fully_connected(
                         y_transform, n_out, activation_fn=None,
                         weights_initializer=init())
@@ -204,12 +206,11 @@ class NN(object):
         val_losses = np.zeros(epochs)
         best_val = np.inf
         start_time = time.time()
-        if batch_size > x_tr.shape[1]:
-            batch_size = n_samples-n_val
+        batch_size = min(batch_size, n_samples-n_val)
 
         for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
-                    batch_size, replace=False)
+                batch_size, replace=False)
             tr_loss = self.sess.run(
                 self.loss_tf, {self.x_tf: x_tr[batch_ids],
                                self.y_tf: y_tr[batch_ids],

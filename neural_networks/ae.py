@@ -176,6 +176,7 @@ class Autoencoder(object):
         val_losses = np.zeros(epochs)
         best_val = np.inf
         start_time = time.time()
+        batch_size = min(batch_size, n_samples - n_val)
         for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
                     batch_size, replace=False)
