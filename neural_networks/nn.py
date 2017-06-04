@@ -8,6 +8,40 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.exceptions import NotFittedError
 import tensorflow as tf
+from tensorflow.contrib.layers import summaries 
+
+
+def summarize_var(variable):
+    name = variable.name
+    tf.summary.histogram(name, variable)
+    mean = tf.reduce_mean(variable)
+    tf.summary.scalar('{}_mean'.format(name), mean)
+    std = tf.reduce_mean((variable - mean)**2)
+    tf.summary.scalar('{}_std'.format(name), std)
+    tf.summary.scalar('{}_min'.format(name), tf.reduce_min(variable))
+    tf.summary.scalar('{}_max'.format(name), tf.reduce_max(variable))
+
+
+def fully_connected(invar, n_out, activation_fn=None,
+    weights_initializer=tf.contrib.layers.xavier_initializer,
+    biases_initializer=tf.constant_initializer, name='fc'):
+    """ A fully-connected layer. Use this instead of tf.contrib.layers
+    to retain fine control over summaries. """
+    with tf.variable_scope(name):
+        n_in = invar.get_shape().as_list()[1]
+        W = tf.get_variable('W', [n_in, n_out], tf.float32,
+            weights_initializer())
+        summarize_var(W)
+        b = tf.get_variable('b', [1, 1], tf.float32,
+            biases_initializer(0.1))
+        tf.summary.scalar('b', tf.reduce_mean(b))
+        out = tf.add(tf.matmul(invar, W), b, name='preactivation')
+        summarize_var(out)
+        if activation_fn is not None:
+            out = activation_fn(out, name='postactivation')
+            summarize_var(out)
+    return out
+
 
 class NN(object):
     """ A Neural Net object.
@@ -43,7 +77,9 @@ class NN(object):
         self.y_pred = self.define_nn()
 
         # Loss.
-        self.loss_tf = self.define_loss()
+        with tf.name_scope('loss'):
+            self.loss_tf = self.define_loss()
+        tf.summary.scalar('loss', self.loss_tf)
 
         # Training.
         self.train_op_tf = self.define_training()
@@ -59,7 +95,9 @@ class NN(object):
         self.sess = tf.Session()
         self.init_op = tf.global_variables_initializer()
         self.sess.run(self.init_op)
-        tf.summary.FileWriter('logs', self.sess.graph)
+        self.summary = tf.summary.merge_all()
+        self.writer = tf.summary.FileWriter('logs/{}'.format(self.name))
+        self.writer.add_graph(self.sess.graph)
 
     def define_nn(self):
         """ Define a Neural Network.
@@ -78,8 +116,6 @@ class NN(object):
         """
         x_dim = self.x_tf.get_shape().as_list()[1]
         y_pred = self.x_tf
-        init = tf.contrib.layers.xavier_initializer
-        fully_connected = tf.contrib.layers.fully_connected
 
         if self.ntype != 'plain':
             # Check that (for Highway and Residual nets) layers have equal size.
@@ -88,9 +124,8 @@ class NN(object):
                     raise ValueError('Highway and Residual nets require all' 
                         'layers to be the same size.')
             # Make sure the input has the same size too.
-            with tf.name_scope('reshape'):
-                y_pred = fully_connected(y_pred, self.arch[0],
-                    weights_initializer=init(), activation_fn=None)
+            with tf.variable_scope('layerreshape'):
+                y_pred = fully_connected(y_pred, self.arch[0])
                 y_pred = tf.nn.dropout(y_pred, keep_prob=self.keep_prob)
 
         for layer_id in range(len(self.arch)):
@@ -99,30 +134,24 @@ class NN(object):
                 y_transform = y_pred
 
                 # Transform the input.
-                with tf.name_scope('transform'):
+                with tf.variable_scope('transform'):
                     if layer_id < len(self.arch) - 1:
                         y_transform = tf.nn.relu(y_transform)
                         y_transform = tf.nn.dropout(y_transform, keep_prob=self.keep_prob)
-                    y_transform = fully_connected(
-                        y_transform, n_out, activation_fn=None,
-                        weights_initializer=init())
+                    y_transform = fully_connected(y_transform, n_out)
 
                 # Propagate the original input in Residual and Highway nets.
                 if (layer_id < len(self.arch)-1 and self.ntype != 'plain'):
                     if self.ntype == 'highway':
-                        with tf.name_scope('highway'):
+                        with tf.variable_scope('highway'):
                             gate = fully_connected(y_pred, n_out,
-                                activation_fn=tf.nn.sigmoid,
-                                weights_initializer=init(),
-                                biases_initializer=tf.constant_initializer(-3.))
+                                activation_fn=tf.nn.sigmoid, name='gate')
                             y_pred = y_transform * gate + y_pred * (1 - gate)
                     elif self.ntype == 'residual':
-                        with tf.name_scope('residual'):
+                        with tf.variable_scope('residual'):
                             if layer_id < len(self.arch) - 1:
                                 y_transform = tf.nn.relu(y_transform)
-                            y_transform = fully_connected(
-                                y_transform, n_out, activation_fn=None,
-                                    weights_initializer=init())
+                            y_transform = fully_connected(y_transform, n_out)
                             y_pred += y_transform
                 else:
                     y_pred = y_transform
@@ -211,11 +240,12 @@ class NN(object):
         for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
                 batch_size, replace=False)
-            tr_loss = self.sess.run(
-                self.loss_tf, {self.x_tf: x_tr[batch_ids],
-                               self.y_tf: y_tr[batch_ids],
-                               self.is_training_tf: False,
-                               self.keep_prob: 1.})
+            tr_loss, s = self.sess.run(
+                [self.loss_tf, self.summary],
+                {self.x_tf: x_tr[batch_ids],
+                 self.y_tf: y_tr[batch_ids],
+                 self.is_training_tf: False,
+                 self.keep_prob: 1.})
             self.sess.run(self.train_op_tf,
                           {self.x_tf: x_tr[batch_ids],
                            self.y_tf: y_tr[batch_ids],
@@ -227,6 +257,10 @@ class NN(object):
                                       self.y_tf: y_val,
                                       self.is_training_tf: False,
                                       self.keep_prob: 1.})
+            # Add summaries for Tensorboard.
+            self.writer.add_summary(s, epoch_id)
+
+            # Store losses.
             tr_losses[epoch_id] = tr_loss
             val_losses[epoch_id] = val_loss
             if val_loss < best_val:
@@ -256,7 +290,7 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128]*10, ntype='residual')
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128]*10, ntype='highway')
     nn.fit(x, y, nn_verbose=True, lr=1e-2)
     y_pred = nn.predict(x)
     plt.plot(x, y, x, y_pred)
