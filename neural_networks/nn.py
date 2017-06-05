@@ -136,8 +136,9 @@ class NN(object):
                 # Transform the input.
                 with tf.variable_scope('transform'):
                     if layer_id < len(self.arch) - 1:
-                        y_transform = tf.nn.relu(y_transform)
-                        y_transform = tf.nn.dropout(y_transform, keep_prob=self.keep_prob)
+                        y_transform = tf.nn.elu(y_transform)
+                        y_transform = tf.nn.dropout(
+                                y_transform, keep_prob=self.keep_prob)
                     y_transform = fully_connected(y_transform, n_out)
 
                 # Propagate the original input in Residual and Highway nets.
@@ -150,7 +151,7 @@ class NN(object):
                     elif self.ntype == 'residual':
                         with tf.variable_scope('residual'):
                             if layer_id < len(self.arch) - 1:
-                                y_transform = tf.nn.relu(y_transform)
+                                y_transform = tf.nn.elu(y_transform)
                             y_transform = fully_connected(y_transform, n_out)
                             y_pred += y_transform
                 else:

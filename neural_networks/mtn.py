@@ -1,6 +1,7 @@
 """ Multi-task networks. """
 import sys
 import time
+import itertools
 from typing import List
 from tempfile import NamedTemporaryFile
 
@@ -49,7 +50,8 @@ class MTN(nn.NN):
             for all tasks.
         These two input parts should be concatenated.
         """
-        super().__init__(x_dim, y_dim, arch, ntype, **kwargs)
+        super().__init__(x_dim, y_dim, arch=arch,
+                ntype=ntype, name=name, **kwargs)
 
     def define_loss(self):
         x_dim = self.x_tf.get_shape().as_list()[1]
@@ -63,107 +65,103 @@ class MTN(nn.NN):
         yscale = StandardScaler()
         return xscale, yscale
 
-def make_data(n_samples, noise_std, projection_mat, transform_mat):
-    # Sample points on a circle and project up.
-    x_circ = np.random.uniform(low=0, high=2*np.pi, size=(n_samples, 1))
-    X = np.hstack([np.cos(x_circ), np.sin(x_circ)])
-    X = np.matmul(X, projection_mat)
-    X += np.random.randn(*X.shape)
-    X = np.sin(np.log(np.abs(X))**2)
-    X = np.matmul(X, transform_mat)
-    X *= np.sin(X)**2
-    # Outputs are a randomized, noisy function on the circle.
-    Y = x_circ + np.random.randn(n_samples, 1)
-    a = np.random.uniform(-1, 1)
-    b = np.random.uniform(low=-2, high=2)
-    c = np.random.uniform(low=-2, high=2)
-    Y = a * Y**2 + b * Y + c + np.random.randn(*Y.shape) * noise_std
-    yield (X, Y)
+def make_data(n_samples, nosie_std, x, y, degree=3):
+    y_orig = np.array(y)
+    while True:
+        n_data = x.shape[0]
+        data_ids = np.random.choice(n_data, n_samples, replace=False)
+        coeffs = np.random.rand(degree) * 2
+        y = np.sum(np.array([coeffs[i] * y_orig**i for i in range(degree)]),
+                axis=0).reshape(-1, 1)
+        y += np.random.rand(*y.shape) * noise_std
+        yield (x[data_ids], y[data_ids])
 
 if __name__=="__main__":
     """ Check that everything works as expected. Should take several
     seconds on a CPU machine. """
     import numpy as np
-    from neural_networks import nn, ae
+    from tensorflow.examples.tutorials.mnist import input_data
     import matplotlib.pyplot as plt
+    
+    # Load MNIST data.
+    mnist = input_data.read_data_sets("MNIST_data/", one_hot=False)
+    mY = mnist.train.labels
+    mX = mnist.train.images.reshape(mY.shape[0], -1)
+    dim = mX.shape[1]
 
-    n_tasks = 100
-    dim = 1000
-    samples = 50
+    # Fix task and nn parameters.
+    n_task_list = [1, 4, 8, 16, 32, 64, 128]
+    max_tasks = max(n_task_list)
+    samples = 100
     epochs = 1000
     noise_std = .1
+    n_test = 1000
     kwargs = {
-              'arch': [128],
-              'ntype': 'plain',
-              'lr': 1e-3,
-              'batch_size': 32,
-              'dropout_keep_prob': 1.
+              'arch': [32] * 30,
+              'ntype': 'highway',
+              'lr': 1e-3
              }
+
     # Make data: X is a list of datasets, each with the same coordinates
     # but potentially 1) different n_samples and 2) different output tasks in Y.
     np.random.seed(1)
-    projection_mat = np.random.uniform(low=-1, high=1, size=(2, dim))
-    transform_mat = np.random.uniform(low=-1, high=1, size=(dim, dim))
-    X, Y = zip(*[next(make_data(samples, noise_std, projection_mat, transform_mat))
-        for _ in range(n_tasks)])
-    X_multi = np.zeros((samples * n_tasks, n_tasks + dim))
-    Y_multi = np.zeros((samples * n_tasks, n_tasks))
-    for task_id, x in enumerate(X):
-        X_multi[task_id*samples : (task_id+1)*samples, task_id:task_id+1] = 1.
-        X_multi[task_id*samples : (task_id+1)*samples:, n_tasks:] = x
-        Y_multi[task_id*samples : (task_id+1)*samples,
-            task_id:task_id+1] = Y[task_id]
-
-    # Train and evaluate a multi-task network.
-    #mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks, **kwargs)
-    #mtnet.fit(X_multi, Y_multi, nn_verbose=True,
-    #        epochs=epochs*min(10, n_tasks), **kwargs)
+    data = make_data(samples + n_test, noise_std, mX, mY)
+    X, Y = zip(*[next(data) for _ in range(max_tasks)])
     errs_mtn = []
-    #for task_id in range(n_tasks):
-    #    mtnpred = mtnet.predict(X_multi[task_id*samples:(task_id+1)*samples])
-    #    mtnpred = mtnpred[:, task_id:task_id+1]
-    #    errs_mtn.append(np.mean((mtnpred - Y[task_id])**2))
-    #mtnet.close()
 
-    # Train a single nn for each task, for comparison.
-    # Auto-encode Xs first.
-    ae = ae.Autoencoder(x_dim=dim, arch=[2])
-    ae.fit(np.vstack(X))
-    Xae = np.split(ae.encode(np.vstack(X)), n_tasks, axis=0)
-    ae.close()
-    errs_nn = []
-    errs_ae = []
-    for task_id in range(n_tasks):
-        print('Task {}: Training a vanilla NN'.format(task_id))
-        nnet = nn.NN(x_dim=X[0].shape[1], y_dim=1, **kwargs)
-        nnet.fit(X[task_id], Y[task_id], nn_verbose=True, epochs=epochs, **kwargs)
-        nnpred = nnet.predict(X[task_id])
-        errs_ae.append(np.mean((nnpred - Y[task_id])**2))
-        nnet.close()
+    for n_tasks in n_task_list:
+        X_multi = np.zeros((samples * n_tasks, n_tasks + dim))
+        Y_multi = np.zeros((samples * n_tasks, n_tasks))
+        X_test = np.zeros((n_test * n_tasks, n_tasks + dim))
+        Y_test = np.zeros((n_test * n_tasks, n_tasks))
+        for task_id, x in enumerate(X[:n_tasks]):
+            X_multi[task_id*samples : (task_id+1)*samples,
+                    task_id:task_id+1] = 1.
+            X_multi[task_id*samples : (task_id+1)*samples:,
+                    n_tasks:] = x[:samples]
+            Y_multi[task_id*samples : (task_id+1)*samples,
+                    task_id:task_id+1] = Y[task_id][:samples]
 
-        print('Task {}: Training an ae-NN'.format(task_id))
-        nnet = nn.NN(x_dim=Xae[0].shape[1], y_dim=1, **kwargs)
-        nnet.fit(Xae[task_id], Y[task_id], nn_verbose=True, epochs=epochs, **kwargs)
-        nnpred = nnet.predict(Xae[task_id])
-        errs_nn.append(np.mean((nnpred - Y[task_id])**2))
-        nnet.close()
+            X_test[task_id*n_test : (task_id+1)*n_test, task_id:task_id+1] = 1.
+            X_test[task_id*n_test : (task_id+1)*n_test, n_tasks:] = x[samples:]
+            Y_test[task_id*n_test : (task_id+1)*n_test,
+                    task_id:task_id+1] = Y[task_id][samples:]
 
-    fig = plt.figure(figsize=(5, 5))
-    plt.xlabel('Task ID')
-    plt.ylabel('Error')
-    plt.title('MTN error to NN error ratio')
-    print(errs_mtn)
-    print(errs_nn)
-    plt.bar(np.arange(n_tasks), np.log(errs_ae) - np.log(errs_nn), width=.8)
-    plt.axhline(y=0)
-    plt.savefig('res1.png')
+        # Train and evaluate a multi-task network, gradually
+        # increasing the number of shared tasks.
+        mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks,
+            name='MTN_test', **kwargs)
+        mtnet.fit(X_multi, Y_multi, nn_verbose=True,
+                epochs=epochs, **kwargs)
+        errs_mtn.append([])
+        for task_id in range(n_tasks):
+            mtnpred = mtnet.predict(X_test[task_id*n_test:(task_id+1)*n_test])
+            mtnpred = mtnpred[:, task_id:task_id+1]
+            errs_mtn[-1].append(np.sqrt(np.mean((
+                mtnpred - Y_test[task_id*n_test:(task_id+1)*n_test,
+                    task_id:task_id+1])**2)))
+        mtnet.close()
 
-    fig = plt.figure(figsize=(5, 5))
-    plt.xlabel('Task ID')
-    plt.ylabel('Error')
-    plt.title('MTN error to NN error ratio')
-    print(errs_mtn)
-    print(errs_nn)
-    plt.bar(np.arange(n_tasks), np.log(errs_ae) - np.log(errs_nn), width=.8)
-    plt.axhline(y=0)
-    plt.savefig('res1.png')
+    plt.figure(figsize=(16, 8))
+    accuracies = np.zeros((len(n_task_list), max(n_task_list)))
+    for n_tasks_id, n_tasks in enumerate(n_task_list):
+        accuracies[n_tasks_id, :n_tasks] = errs_mtn[n_tasks_id]
+
+    vmax = np.max(accuracies)
+    plt.figure(figsize=(10, 10))
+    cutoff = 1
+    n_tasks_cutoff = n_task_list[cutoff]
+    barw = .8 / len(n_task_list)
+    for n_tasks_id in range(len(n_task_list)):
+        n_tasks = min(n_tasks_cutoff, n_task_list[n_tasks_id])
+        plt.title('{} tasks'.format(n_task_list[n_tasks_id]))
+        plt.xlabel('Task ID')
+        plt.ylabel('MTN accuracy')
+        plt.bar(np.arange(n_tasks_cutoff) + n_tasks_id * barw,
+                width=barw,
+                height=accuracies[n_tasks_id, :n_tasks_cutoff],
+                label='{}'.format(n_task_list[n_tasks_id]))
+        plt.ylim([0, vmax])
+    plt.legend(loc=0)
+    plt.savefig('res.png')
+
