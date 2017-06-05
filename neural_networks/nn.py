@@ -91,13 +91,6 @@ class NN(object):
         # Define the data scaler.
         self.scaler_x, self.scaler_y = self.define_scalers()
 
-        # Define the Tensorflow session, and its initializer op.
-        self.sess = tf.Session()
-        self.init_op = tf.global_variables_initializer()
-        self.sess.run(self.init_op)
-        self.summary = tf.summary.merge_all()
-        self.writer = tf.summary.FileWriter('logs/{}'.format(self.name))
-        self.writer.add_graph(self.sess.graph)
 
     def define_nn(self):
         """ Define a Neural Network.
@@ -169,22 +162,13 @@ class NN(object):
     def define_scalers(self):
         return StandardScaler(), StandardScaler()
 
-    def close(self):
-        """ Close the session and reset the graph. Note: this
-        will make this neural net unusable. """
-        self.sess.close()
-        tf.reset_default_graph()
-
-    def restart(self):
-        """ Re-initialize the network. """
-        self.sess.run(self.init_op)
-
-    def predict(self, x):
+    def predict(self, x, sess):
         """ Compute the output for given data.
 
         Args:
             x (n_samples, x_dim): Input data.
                 x_dim must agree with that passed to __init__.
+            sess: Tensorflow session.
 
         Returns:
             y (n_samples, y_dim): Predicted outputs.
@@ -193,25 +177,28 @@ class NN(object):
             x = self.scaler_x.transform(x)
         except NotFittedError:
             print('Warning: scalers are not fitted.')
-        y_pred = self.sess.run(self.y_pred,
+        y_pred = sess.run(self.y_pred,
                 {self.x_tf: x,
                  self.keep_prob: 1.,
                  self.is_training_tf: False})
         return self.scaler_y.inverse_transform(y_pred)
 
-    def fit(self, x, y, epochs=1000, batch_size=32,
+    def fit(self, x, y, sess, epochs=1000, batch_size=32,
             lr=1e-3, nn_verbose=False,
-            dropout_keep_prob=1., **kwargs):
+            dropout_keep_prob=1., writer=None, summary=None, **kwargs):
         """ Train the MDN to maximize the data likelihood.
 
         Args:
             x (n_samples, x_dim): Input data.
             y (n_samples, y_dim): Output data.
+            sess: Tensorflow session.
             epochs (int): How many batches to train for.
             batch_size (int): Training batch size.
             lr (float): Learning rate.
             nn_verbose (bool): Display training progress messages (or not).
             dropout_keep_prob (float): Probability of keeping a unit on.
+            writer: A writer object for Tensorboard bookkeeping.
+            summary: Summary object for the writer.
 
         Returns:
             tr_losses (num_epochs,): Training errors (zero-padded).
@@ -241,25 +228,35 @@ class NN(object):
         for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
                 batch_size, replace=False)
-            tr_loss, s = self.sess.run(
-                [self.loss_tf, self.summary],
-                {self.x_tf: x_tr[batch_ids],
-                 self.y_tf: y_tr[batch_ids],
-                 self.is_training_tf: False,
-                 self.keep_prob: 1.})
-            self.sess.run(self.train_op_tf,
+            if summary:
+                tr_loss, s = sess.run(
+                    [self.loss_tf, summary],
+                    {self.x_tf: x_tr[batch_ids],
+                     self.y_tf: y_tr[batch_ids],
+                     self.is_training_tf: False,
+                     self.keep_prob: 1.})
+            else:
+                tr_loss = sess.run(
+                    self.loss_tf,
+                    {self.x_tf: x_tr[batch_ids],
+                     self.y_tf: y_tr[batch_ids],
+                     self.is_training_tf: False,
+                     self.keep_prob: 1.})
+            sess.run(self.train_op_tf,
                           {self.x_tf: x_tr[batch_ids],
                            self.y_tf: y_tr[batch_ids],
                            self.is_training_tf: True,
                            self.keep_prob: dropout_keep_prob,
                            self.lr_tf: lr})
-            val_loss = self.sess.run(self.loss_tf,
+            val_loss = sess.run(self.loss_tf,
                                      {self.x_tf: x_val,
                                       self.y_tf: y_val,
                                       self.is_training_tf: False,
                                       self.keep_prob: 1.})
-            # Add summaries for Tensorboard.
-            self.writer.add_summary(s, epoch_id)
+
+            if writer:
+                # Add summaries for Tensorboard.
+                writer.add_summary(s, epoch_id)
 
             # Store losses.
             tr_losses[epoch_id] = tr_loss
@@ -268,7 +265,7 @@ class NN(object):
                 last_improved = epoch_id
                 best_val = val_loss
                 model_path = self.saver.save(
-                    self.sess, self.tmpfile.name)
+                    sess, self.tmpfile.name)
 
             tr_time = time.time() - start_time
             if nn_verbose:
@@ -278,7 +275,7 @@ class NN(object):
                                        tr_loss, val_loss, best_val))
                 sys.stdout.flush()
 
-        self.saver.restore(self.sess, model_path)
+        self.saver.restore(sess, model_path)
         if nn_verbose:
             print('Trainig done in {} epochs, {}s. Validation loss {:.4g}.'.format(
                 epoch_id, tr_time, best_val))
@@ -292,7 +289,19 @@ if __name__ == "__main__":
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
     nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128]*10, ntype='highway')
-    nn.fit(x, y, nn_verbose=True, lr=1e-2)
-    y_pred = nn.predict(x)
+    with tf.Session() as sess:
+        # Define the Tensorflow session, and its initializer op.
+        sess.run(tf.global_variables_initializer())
+
+        # Use a writer object for Tensorboard.
+        summary = tf.summary.merge_all()
+        writer = tf.summary.FileWriter('logs/{}'.format('nn'))
+        writer.add_graph(sess.graph)
+
+        # Fit the net.
+        nn.fit(x, y, sess=sess, nn_verbose=True, lr=1e-2)
+
+        # Predict.
+        y_pred = nn.predict(x, sess=sess)
     plt.plot(x, y, x, y_pred)
     plt.savefig('res.png')

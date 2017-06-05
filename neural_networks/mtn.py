@@ -77,8 +77,10 @@ def make_data(n_samples, nosie_std, x, y, degree=3):
         yield (x[data_ids], y[data_ids])
 
 if __name__=="__main__":
-    """ Check that everything works as expected. Should take several
-    seconds on a CPU machine. """
+    """ Check that everything works as expected. """
+    print('===============================================================')
+    print('Evaluating MTN. Takes about 30min on a Titan X machine.')
+    print('===============================================================')
     import numpy as np
     from tensorflow.examples.tutorials.mnist import input_data
     import matplotlib.pyplot as plt
@@ -93,9 +95,9 @@ if __name__=="__main__":
     n_task_list = [1, 4, 8, 16, 32, 64, 128]
     max_tasks = max(n_task_list)
     samples = 100
-    epochs = 1000
+    epochs = 10000
     noise_std = .1
-    n_test = 1000
+    n_test = 10000
     kwargs = {
               'arch': [32] * 30,
               'ntype': 'highway',
@@ -127,20 +129,31 @@ if __name__=="__main__":
             Y_test[task_id*n_test : (task_id+1)*n_test,
                     task_id:task_id+1] = Y[task_id][samples:]
 
-        # Train and evaluate a multi-task network, gradually
-        # increasing the number of shared tasks.
+        # Create the Tensorflow graph.
         mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks,
             name='MTN_test', **kwargs)
-        mtnet.fit(X_multi, Y_multi, nn_verbose=True,
-                epochs=epochs, **kwargs)
-        errs_mtn.append([])
-        for task_id in range(n_tasks):
-            mtnpred = mtnet.predict(X_test[task_id*n_test:(task_id+1)*n_test])
-            mtnpred = mtnpred[:, task_id:task_id+1]
-            errs_mtn[-1].append(np.sqrt(np.mean((
-                mtnpred - Y_test[task_id*n_test:(task_id+1)*n_test,
-                    task_id:task_id+1])**2)))
-        mtnet.close()
+        with tf.Session() as sess:
+            # Define the Tensorflow session, and its initializer op.
+            sess.run(tf.global_variables_initializer())
+
+            # Use a writer object for Tensorboard.
+            summary = tf.summary.merge_all()
+            writer = tf.summary.FileWriter('logs/{}'.format('mtn'))
+            writer.add_graph(sess.graph)
+
+            # Fit the net.
+            mtnet.fit(X_multi, Y_multi, sess=sess, nn_verbose=True,
+                    epochs=epochs, **kwargs)
+
+            errs_mtn.append([])
+            for task_id in range(n_tasks):
+                mtnpred = mtnet.predict(X_test[task_id*n_test:(task_id+1)*n_test],
+                    sess=sess)
+                mtnpred = mtnpred[:, task_id:task_id+1]
+                errs_mtn[-1].append(np.sqrt(np.mean((
+                    mtnpred - Y_test[task_id*n_test:(task_id+1)*n_test,
+                        task_id:task_id+1])**2)))
+        tf.reset_default_graph()
 
     plt.figure(figsize=(16, 8))
     accuracies = np.zeros((len(n_task_list), max(n_task_list)))
@@ -154,7 +167,8 @@ if __name__=="__main__":
     barw = .8 / len(n_task_list)
     for n_tasks_id in range(len(n_task_list)):
         n_tasks = min(n_tasks_cutoff, n_task_list[n_tasks_id])
-        plt.title('{} tasks'.format(n_task_list[n_tasks_id]))
+        plt.title('MTN performance as number of tasks grows'.format(
+            n_task_list[n_tasks_id]))
         plt.xlabel('Task ID')
         plt.ylabel('MTN accuracy')
         plt.bar(np.arange(n_tasks_cutoff) + n_tasks_id * barw,
