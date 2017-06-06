@@ -11,17 +11,6 @@ import tensorflow as tf
 from tensorflow.contrib.layers import summaries 
 
 
-def summarize_var(variable):
-    name = variable.name
-    tf.summary.histogram(name, variable)
-    mean = tf.reduce_mean(variable)
-    tf.summary.scalar('{}_mean'.format(name), mean)
-    std = tf.reduce_mean((variable - mean)**2)
-    tf.summary.scalar('{}_std'.format(name), std)
-    tf.summary.scalar('{}_min'.format(name), tf.reduce_min(variable))
-    tf.summary.scalar('{}_max'.format(name), tf.reduce_max(variable))
-
-
 def fully_connected(invar, n_out, activation_fn=None,
     weights_initializer=tf.contrib.layers.xavier_initializer,
     biases_initializer=tf.constant_initializer, name='fc'):
@@ -31,15 +20,15 @@ def fully_connected(invar, n_out, activation_fn=None,
         n_in = invar.get_shape().as_list()[1]
         W = tf.get_variable('W', [n_in, n_out], tf.float32,
             weights_initializer())
-        summarize_var(W)
+        tf.summary.histogram('W', W)
         b = tf.get_variable('b', [1, 1], tf.float32,
             biases_initializer(0.1))
         tf.summary.scalar('b', tf.reduce_mean(b))
         out = tf.add(tf.matmul(invar, W), b, name='preactivation')
-        summarize_var(out)
+        tf.summary.histogram('preactivation', out)
         if activation_fn is not None:
             out = activation_fn(out, name='postactivation')
-            summarize_var(out)
+            tf.summary.histogram('postactivation', out)
     return out
 
 
@@ -59,9 +48,8 @@ class NN(object):
         name: Name prepended to all variables in the graph.
     """
     def __init__(self, x_dim, y_dim, arch=[1024],
-            ntype='plain', name='nn', **kwargs):
+            ntype='plain', **kwargs):
         # Bookkeeping.
-        self.name = name
         self.arch = arch + [y_dim]
         self.ntype = ntype
         self.x_tf = tf.placeholder(
@@ -71,7 +59,6 @@ class NN(object):
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
         self.keep_prob = tf.placeholder(tf.float32, name='dropout')
         self.y_dim = y_dim
-        self.is_training_tf = tf.placeholder(tf.bool, name='trainflag')
 
         # Inference.
         self.y_pred = self.define_nn()
@@ -99,17 +86,11 @@ class NN(object):
         matrices. The last matrix must be of shape (?, y_dim). If the number
         of layers is lower than 3, use the sigmoid nonlinearity.
         Otherwise, use the relu.
-
-        Returns:
-            out: Predicted y.
-
-        Raises:
-            ValueError: When the last weight tensor's output is not compatible
-                with the input shape.
         """
         x_dim = self.x_tf.get_shape().as_list()[1]
         y_pred = self.x_tf
-
+        if self.ntype not in ['residual', 'highway', 'plain']:
+            raise ValueError('Network type not available.')
         if self.ntype != 'plain':
             # Check that (for Highway and Residual nets) layers have equal size.
             for layer_id in range(len(self.arch)-1):
@@ -179,8 +160,7 @@ class NN(object):
             print('Warning: scalers are not fitted.')
         y_pred = sess.run(self.y_pred,
                 {self.x_tf: x,
-                 self.keep_prob: 1.,
-                 self.is_training_tf: False})
+                 self.keep_prob: 1.})
         return self.scaler_y.inverse_transform(y_pred)
 
     def fit(self, x, y, sess, epochs=1000, batch_size=32,
@@ -228,30 +208,26 @@ class NN(object):
         for epoch_id in range(epochs):
             batch_ids = np.random.choice(n_samples-n_val,
                 batch_size, replace=False)
-            if summary:
+            if summary is not None:
                 tr_loss, s = sess.run(
                     [self.loss_tf, summary],
                     {self.x_tf: x_tr[batch_ids],
                      self.y_tf: y_tr[batch_ids],
-                     self.is_training_tf: False,
                      self.keep_prob: 1.})
             else:
                 tr_loss = sess.run(
                     self.loss_tf,
                     {self.x_tf: x_tr[batch_ids],
                      self.y_tf: y_tr[batch_ids],
-                     self.is_training_tf: False,
                      self.keep_prob: 1.})
             sess.run(self.train_op_tf,
                           {self.x_tf: x_tr[batch_ids],
                            self.y_tf: y_tr[batch_ids],
-                           self.is_training_tf: True,
                            self.keep_prob: dropout_keep_prob,
                            self.lr_tf: lr})
             val_loss = sess.run(self.loss_tf,
                                      {self.x_tf: x_val,
                                       self.y_tf: y_val,
-                                      self.is_training_tf: False,
                                       self.keep_prob: 1.})
 
             if writer:
@@ -288,18 +264,19 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[128]*10, ntype='highway')
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[32]*10, ntype='plain')
     with tf.Session() as sess:
         # Define the Tensorflow session, and its initializer op.
         sess.run(tf.global_variables_initializer())
 
         # Use a writer object for Tensorboard.
         summary = tf.summary.merge_all()
-        writer = tf.summary.FileWriter('logs/{}'.format('nn'))
+        writer = tf.summary.FileWriter('logs/{}'.format('plain'))
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        nn.fit(x, y, sess=sess, nn_verbose=True, lr=1e-2)
+        nn.fit(x, y, sess=sess, nn_verbose=True, lr=1e-2,
+            writer=writer, summary=summary, epochs=1000)
 
         # Predict.
         y_pred = nn.predict(x, sess=sess)

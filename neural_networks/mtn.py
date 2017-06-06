@@ -3,7 +3,6 @@ import sys
 import time
 import itertools
 from typing import List
-from tempfile import NamedTemporaryFile
 
 import numpy as np
 from sklearn.preprocessing import StandardScaler
@@ -130,8 +129,7 @@ if __name__=="__main__":
                     task_id:task_id+1] = Y[task_id][samples:]
 
         # Create the Tensorflow graph.
-        mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks,
-            name='MTN_test', **kwargs)
+        mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks, **kwargs)
         with tf.Session() as sess:
             # Define the Tensorflow session, and its initializer op.
             sess.run(tf.global_variables_initializer())
