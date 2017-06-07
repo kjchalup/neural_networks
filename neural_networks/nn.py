@@ -12,17 +12,17 @@ from tensorflow.contrib.layers import summaries
 
 
 def fully_connected(invar, n_out, activation_fn=None,
-    weights_initializer=tf.contrib.layers.xavier_initializer,
-    biases_initializer=tf.constant_initializer, name='fc'):
+    weights_initializer=tf.contrib.layers.xavier_initializer(),
+    biases_initializer=tf.constant_initializer(.1), name='fc'):
     """ A fully-connected layer. Use this instead of tf.contrib.layers
     to retain fine control over summaries. """
     with tf.variable_scope(name):
         n_in = invar.get_shape().as_list()[1]
         W = tf.get_variable('W', [n_in, n_out], tf.float32,
-            weights_initializer())
+            weights_initializer)
         tf.summary.histogram('W', W)
         b = tf.get_variable('b', [1, 1], tf.float32,
-            biases_initializer(0.1))
+            biases_initializer)
         tf.summary.scalar('b', tf.reduce_mean(b))
         out = tf.add(tf.matmul(invar, W), b, name='preactivation')
         tf.summary.histogram('preactivation', out)

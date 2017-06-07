@@ -7,7 +7,7 @@ from tempfile import NamedTemporaryFile
 
 import numpy as np
 from matplotlib import pyplot as plt
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 
@@ -42,8 +42,16 @@ class GAN(object):
             self.d_loss_tf = self.define_dloss()
             self.d_train_tf = self.define_dtrain()
 
+        # Define the data scalers.
+        self.scaler_x = self.define_scalers()
+
+    def define_scalers(self):
+        return MinMaxScaler(feature_range=(-1, 1))
+
     def define_nn(self, arch, ntype, in_tf):
         out = in_tf
+        w_init = tf.random_normal_initializer(stddev=.02)
+        b_init = tf.constant_initializer(0.)
         # First, define how noise propagates through the generator.
         if ntype not in ['residual', 'highway', 'plain']:
             raise ValueError('Network type not available.')
@@ -55,7 +63,9 @@ class GAN(object):
                         'layers to be the same size.')
             # Make sure the input has the same size too.
             with tf.variable_scope('layerreshape'):
-                out = nn.fully_connected(out, arch[0])
+                out = nn.fully_connected(out, arch[0],
+                    weights_initializer=w_init,
+                    biases_initializer=b_init)
                 out = tf.nn.dropout(out, keep_prob=self.keep_prob)
 
         for layer_id in range(len(arch)):
@@ -69,19 +79,26 @@ class GAN(object):
                         out_transform = tf.nn.elu(out_transform)
                         out_transform = tf.nn.dropout(
                                 out_transform, keep_prob=self.keep_prob)
-                    out_transform = nn.fully_connected(out_transform, n_out)
+                    out_transform = nn.fully_connected(out_transform, n_out,
+                        weights_initializer=w_init,
+                        biases_initializer=b_init)
 
                 # Propagate the original input in Residual and Highway nets.
                 if (layer_id < len(arch)-1 and ntype != 'plain'):
                     if ntype == 'highway':
                         with tf.variable_scope('highway'):
-                            gate = nn.fully_connected(out, n_out, activation_fn=tf.nn.sigmoid, name='gate')
+                            gate = nn.fully_connected(out, n_out,
+                                weights_initializer=w_init,
+                                biases_initializer=b_init,
+                                activation_fn=tf.nn.sigmoid, name='gate')
                             out = out_transform * gate + out * (1 - gate)
                     elif ntype == 'residual':
                         with tf.variable_scope('residual'):
                             if layer_id < len(arch) - 1:
                                 out_transform = tf.nn.elu(out_transform)
-                            out_transform = nn.fully_connected(out_transform, n_out)
+                            out_transform = nn.fully_connected(out_transform, n_out,
+                                weights_initializer=w_init,
+                                biases_initializer=b_init)
                             out += out_transform
                 else:
                     out = out_transform
@@ -89,8 +106,8 @@ class GAN(object):
 
     def define_gan(self):
         with tf.variable_scope('generator'):
-            x_from_z = self.define_nn(
-                self.g_arch, self.g_ntype, self.z_tf)
+            x_from_z = tf.nn.tanh(self.define_nn(
+                self.g_arch, self.g_ntype, self.z_tf))
         with tf.variable_scope('discriminator') as scope:
             y_from_x = tf.nn.sigmoid(self.define_nn(
                 self.d_arch, self.d_ntype, self.x_tf))
@@ -117,29 +134,25 @@ class GAN(object):
         return tf.train.AdamOptimizer(self.lr_tf).minimize(
             self.d_loss_tf, var_list=var_list)
 
-    def fit(self, x, sess, epochs=1000, d_epochs=10,
+    def fit(self, x, sess, epochs=1000, d_epochs=10, p_flip=.01,
             batch_size=32, g_lr=1e-3, d_lr=1e-3, nn_verbose=True, **kwargs):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
-        nmin = np.min(x)
-        nmax = np.max(x)
+        x = self.scaler_x.fit_transform(x)
         for epoch in range(epochs):
             # Train the discriminator.
             for k in range(d_epochs):
-                z_noise = self.sample_noise(batch_size, nmin, nmax)
+                z_noise = self.sample_noise(batch_size)
                 x_real = x[np.random.choice(x.shape[0], batch_size)]
-                sess.run(self.d_train_tf,
+                flip_data = np.random.rand() < p_flip
+                _, d_tr_loss = sess.run([self.d_train_tf, self.d_loss_tf],
                     {self.x_tf: x_real,
                      self.z_tf: z_noise,
                      self.keep_prob: 1.,
                      self.lr_tf: d_lr})
-                d_tr_loss = sess.run(self.d_loss_tf,
-                    {self.x_tf: x_real,
-                     self.z_tf: z_noise,
-                     self.keep_prob: 1.})
 
             # Train the generator.
-            z_noise = self.sample_noise(batch_size, nmin=nmin, nmax=nmax)
+            z_noise = self.sample_noise(batch_size)
             sess.run(self.g_train_tf,
                 {self.z_tf: z_noise,
                  self.lr_tf: g_lr,
@@ -160,13 +173,21 @@ class GAN(object):
                 sys.stdout.flush()
 
     def sample(self, n_samples, nmin, nmax):
-        z_noise = self.sample_noise(n_samples, nmin=nmin, nmax=nmax)
-        return sess.run(self.x_from_z,
+        z_noise = self.sample_noise(n_samples)
+        x = sess.run(self.x_from_z,
             {self.z_tf: z_noise,
                 self.keep_prob: 1.})
+        return self.scaler_x.inverse_transform(x)
 
-    def sample_noise(self, n_samples, nmin, nmax):
-        samples = np.random.uniform(nmin, nmax, size=(n_samples, self.noise_dim))
+    def sample_noise(self, n_samples):
+        samples = np.zeros((n_samples, self.noise_dim))
+        for mode in range(10):
+            news = np.random.randn(n_samples, self.noise_dim) + np.random.uniform(-10, 10)
+            if mode > 0:
+                change_ids = np.random.choice(n_samples, int(n_samples/4))
+            else:
+                change_ids = np.arange(n_samples)
+            samples[change_ids] = news[change_ids]
         return samples
 
 
@@ -175,14 +196,15 @@ if __name__=="__main__":
     import matplotlib.pyplot as plt
     n_samples = 100000
     kwargs = {
-              'epochs': 100,
-              'g_arch': [128] * 4,
+              'epochs': 10000,
+              'g_arch': [128] * 2,
               'g_ntype': 'plain',
-              'd_arch': [128] * 8,
+              'd_arch': [128] * 2,
               'd_ntype': 'plain',
-              'd_epochs': 100,
-              'g_lr': 1e-4,
-              'd_lr': 1e-4,
+              'd_epochs': 1,
+              'g_epochs': 1,
+              'g_lr': 1e-2,
+              'd_lr': 1e-2,
               'noise_dim': 1,
               'batch_size': 8
              }
@@ -191,7 +213,9 @@ if __name__=="__main__":
     X = np.random.uniform(low=-5, high=-2, size=(n_samples, 1))
     X *= np.random.rand(n_samples, 1)
     X *= -4
-    np.random.shuffle(X)
+    X += 10
+    X2 = -X
+    X = np.vstack([X, X2])[np.random.choice(n_samples*2, n_samples)]
     gan = GAN(x_dim=X.shape[1], **kwargs)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
@@ -210,9 +234,9 @@ if __name__=="__main__":
     vmax = max(X.max(), X_samples.max())
     fig = plt.figure(figsize=(10, 10))
     plt.hist(X.flatten(), bins=np.linspace(vmin, vmax, 100),
-        label='true')
+        label='true', alpha=.5)
     plt.hist(X_samples.flatten(), bins=np.linspace(vmin, vmax, 100),
-        label='samples')
+        label='samples', alpha=.5)
     plt.legend(loc=0)
     plt.show()
 
