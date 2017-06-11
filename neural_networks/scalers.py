@@ -9,16 +9,17 @@ class StandardScaler(object):
         self.std = 0
 
     def fit(self, x):
-        self.mean = np.nanmean(x, axis=1)
-        self.std = np.nanstd(x, axis=1)
+        self.mean = np.nanmean(x, axis=0, keepdims=True)
+        self.std = np.nanstd(x, axis=0, keepdims=True)
 
     def transform(self, x):
+        x = np.array(x)
+        x = (x - self.mean) / self.std
         x[np.isnan(x)] = 0
-        return (x - self.mean) / self.std
+        return x
 
     def fit_transform(self, x):
         self.fit(x)
-        x[np.isnan(x)] = 0
         return self.transform(x)
 
     def inverse_transform(self, y):

@@ -214,11 +214,13 @@ class NN(object):
             n_val = max(1, n_val)
         nans = np.isnan(x)
         ids_perm = np.random.permutation(n_samples)
-        x[ids_perm[:-n_val]] = self.scaler_x.fit_transform(x[ids_perm[:-n_val]])
-        y[ids_perm[:-n_val]] = self.scaler_y.fit_transform(y[ids_perm[:-n_val]])
+        x = np.array(x)
+        y = np.array(y)
+        x[ids_perm[n_val:]] = self.scaler_x.fit_transform(x[ids_perm[n_val:]])
+        y[ids_perm[n_val:]] = self.scaler_y.fit_transform(y[ids_perm[n_val:]])
         if n_val > 0:
-            x[ids_perm[-n_val:]] = self.scaler_x.transform(x[ids_perm[-n_val:]])
-            y[ids_perm[-n_val:]] = self.scaler_y.transform(y[ids_perm[-n_val:]])
+            x[ids_perm[:n_val]] = self.scaler_x.transform(x[ids_perm[:n_val]])
+            y[ids_perm[:n_val]] = self.scaler_y.transform(y[ids_perm[:n_val]])
 
         # Train the neural net.
         tr_losses = np.zeros(epochs)
@@ -228,8 +230,8 @@ class NN(object):
         batch_size = min(batch_size, n_samples-n_val)
 
         for epoch_id in range(epochs):
-            batch_ids = ids_perm[np.random.choice(n_samples-n_val,
-                batch_size, replace=False)]
+            batch_ids = ids_perm[n_val +
+                np.random.choice(n_samples-n_val,  batch_size, replace=False)]
             W_nograd = compute_nograd(nans[batch_ids], self.arch[0])
             _, tr_loss, s = sess.run(
                 [self.train_op_tf, self.loss_tf,
@@ -241,14 +243,14 @@ class NN(object):
                  self.lr_tf: lr})
             if n_val > 0:
                 val_loss = sess.run(self.loss_tf,
-                    {self.x_tf: x[ids_perm[-n_val:],
-                     self.y_tf: y[ids_perm[-n_val:],
-                     self.W_nograd_tf: W_nograd,
-                     self.keep_prob: 1.})
+                    {self.x_tf: x[ids_perm[:n_val]],
+                    self.y_tf: y[ids_perm[:n_val]],
+                    self.W_nograd_tf: W_nograd,
+                    self.keep_prob: 1.})
             else:
                 val_loss = tr_loss
 
-            if writer:
+            if writer is not None:
                 # Add summaries for Tensorboard.
                 writer.add_summary(s, epoch_id)
 
@@ -282,6 +284,8 @@ if __name__ == "__main__":
     from matplotlib import pyplot as plt
     x = np.linspace(-1, 1, 1000).reshape(-1, 1)
     y = np.sin(5 * x ** 2) + x + np.random.randn(*x.shape) * .1
+    perm_ids = np.random.permutation(1000)
+    x[perm_ids[:100]] = np.nan
     nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[32]*10, ntype='plain')
     with tf.Session() as sess:
         # Define the Tensorflow session, and its initializer op.
@@ -293,10 +297,10 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        nn.fit(x, y, sess=sess, nn_verbose=True, lr=1e-2,
-            writer=writer, summary=summary, epochs=1000)
+        nn.fit(x[perm_ids[:900]], y[perm_ids[:900]], sess=sess, nn_verbose=True, lr=1e-4,
+            writer=writer, summary=summary, epochs=10000, batch_size=1)
 
         # Predict.
-        y_pred = nn.predict(x, sess=sess)
-    plt.plot(x, y, x, y_pred)
+        y_pred = nn.predict(x[perm_ids[900:]], sess=sess)
+    plt.plot(x[perm_ids[900:]], y[perm_ids[900:]], '.', x[perm_ids[900:]], y_pred, '.')
     plt.savefig('res.png')
