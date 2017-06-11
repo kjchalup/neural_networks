@@ -68,16 +68,19 @@ if __name__=="__main__":
     dim = mX.shape[1]
 
     # Fix task and nn parameters.
-    n_task_list = [1, 4, 8, 16, 32, 64, 128]
+    #n_task_list = [1, 4, 8, 16, 32, 64]
+    n_task_list = [1, 4, 8, 16, 28]
     max_tasks = max(n_task_list)
     samples = 100
     epochs = 10000
     noise_std = .1
     n_test = 10000
     kwargs = {
-              'arch': [32] * 30,
-              'ntype': 'highway',
-              'lr': 1e-3
+              'arch': [128] * 2,
+              'ntype': 'plain',
+              'batch_size': 1,
+              'lr': 1e-4,
+              'valsize': .3
              }
 
     # Make data: X is a list of datasets, each with the same coordinates
@@ -88,6 +91,7 @@ if __name__=="__main__":
     errs_mtn = []
 
     for n_tasks in n_task_list:
+        print('MTN training on {} tasks...'.format(n_tasks))
         X_multi = np.zeros((samples * n_tasks, n_tasks + dim))
         Y_multi = np.zeros((samples * n_tasks, n_tasks))
         X_test = np.zeros((n_test * n_tasks, n_tasks + dim))
@@ -95,15 +99,20 @@ if __name__=="__main__":
         for task_id, x in enumerate(X[:n_tasks]):
             X_multi[task_id*samples : (task_id+1)*samples,
                     task_id:task_id+1] = 1.
+            data = np.array(x[:samples])
+            data[:, task_id*28 : (task_id+1)*28] = np.nan
             X_multi[task_id*samples : (task_id+1)*samples:,
-                    n_tasks:] = x[:samples]
+                    n_tasks:] = data
             Y_multi[task_id*samples : (task_id+1)*samples,
                     task_id:task_id+1] = Y[task_id][:samples]
 
             X_test[task_id*n_test : (task_id+1)*n_test, task_id:task_id+1] = 1.
-            X_test[task_id*n_test : (task_id+1)*n_test, n_tasks:] = x[samples:]
+            data = np.array(x[samples:])
+            data[:, task_id*28 : (task_id+1)*28] = np.nan
+            X_test[task_id*n_test : (task_id+1)*n_test, n_tasks:] = data
             Y_test[task_id*n_test : (task_id+1)*n_test,
                     task_id:task_id+1] = Y[task_id][samples:]
+            
 
         # Create the Tensorflow graph.
         mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks, **kwargs)
@@ -129,6 +138,7 @@ if __name__=="__main__":
                     mtnpred - Y_test[task_id*n_test:(task_id+1)*n_test,
                         task_id:task_id+1])**2)))
         tf.reset_default_graph()
+        print('Done\n.')
 
     plt.figure(figsize=(16, 8))
     accuracies = np.zeros((len(n_task_list), max(n_task_list)))
@@ -146,11 +156,10 @@ if __name__=="__main__":
             n_task_list[n_tasks_id]))
         plt.xlabel('Task ID')
         plt.ylabel('MTN accuracy')
-        plt.bar(np.arange(n_tasks_cutoff) + n_tasks_id * barw,
+        plt.bar(np.arange(n_tasks_cutoff+1) + n_tasks_id * barw,
                 width=barw,
                 height=accuracies[n_tasks_id, :n_tasks_cutoff],
                 label='{}'.format(n_task_list[n_tasks_id]))
         plt.ylim([0, vmax])
     plt.legend(loc=0)
     plt.savefig('res.png')
-

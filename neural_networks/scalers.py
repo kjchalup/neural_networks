@@ -11,6 +11,7 @@ class StandardScaler(object):
     def fit(self, x):
         self.mean = np.nanmean(x, axis=0, keepdims=True)
         self.std = np.nanstd(x, axis=0, keepdims=True)
+        self.std[self.std==0] = 1.
 
     def transform(self, x):
         x = np.array(x)

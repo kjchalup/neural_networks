@@ -14,7 +14,7 @@ from neural_networks import scalers
 def compute_nograd(nans, n_out):
     """ Compute a binary mask matrix of shape (x.shape[1], n_out). The matrix
     has '0' in each row that corresponds to x equal nan. """
-    W = np.ones((x.shape[1], n_out))
+    W = np.ones((nans.shape[1], n_out))
     W[nans.sum(axis=0) > 0] = 0.
     return W
 
@@ -233,14 +233,22 @@ class NN(object):
             batch_ids = ids_perm[n_val +
                 np.random.choice(n_samples-n_val,  batch_size, replace=False)]
             W_nograd = compute_nograd(nans[batch_ids], self.arch[0])
-            _, tr_loss, s = sess.run(
-                [self.train_op_tf, self.loss_tf,
-                 summary if summary is not None else 1.],
-                {self.x_tf: x[batch_ids],
-                 self.y_tf: y[batch_ids],
-                 self.W_nograd_tf: W_nograd,
-                 self.keep_prob: dropout_keep_prob,
-                 self.lr_tf: lr})
+            if summary is None:
+                _, tr_loss = sess.run(
+                    [self.train_op_tf, self.loss_tf],
+                    {self.x_tf: x[batch_ids],
+                     self.y_tf: y[batch_ids],
+                     self.W_nograd_tf: W_nograd,
+                     self.keep_prob: dropout_keep_prob,
+                     self.lr_tf: lr})
+            else:
+                _, tr_loss, s = sess.run(
+                    [self.train_op_tf, self.loss_tf, summary],
+                    {self.x_tf: x[batch_ids],
+                     self.y_tf: y[batch_ids],
+                     self.W_nograd_tf: W_nograd,
+                     self.keep_prob: dropout_keep_prob,
+                     self.lr_tf: lr})
             if n_val > 0:
                 val_loss = sess.run(self.loss_tf,
                     {self.x_tf: x[ids_perm[:n_val]],
