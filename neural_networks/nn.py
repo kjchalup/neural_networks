@@ -5,13 +5,21 @@ from typing import List
 from tempfile import NamedTemporaryFile
 
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 from tensorflow.contrib.layers import summaries 
 
+from neural_networks import scalers
 
-def fully_connected(invar, n_out, activation_fn=None,
+
+def compute_nograd(nans, n_out):
+    """ Compute a binary mask matrix of shape (x.shape[1], n_out). The matrix
+    has '0' in each row that corresponds to x equal nan. """
+    W = np.ones((x.shape[1], n_out))
+    W[nans.sum(axis=0) > 0] = 0.
+    return W
+
+
+def fully_connected(invar, n_out, activation_fn=tf.identity, W_nograd=None,
     weights_initializer=tf.contrib.layers.xavier_initializer(),
     biases_initializer=tf.constant_initializer(.1), name='fc'):
     """ A fully-connected layer. Use this instead of tf.contrib.layers
@@ -24,11 +32,11 @@ def fully_connected(invar, n_out, activation_fn=None,
         b = tf.get_variable('b', [1, 1], tf.float32,
             biases_initializer)
         tf.summary.scalar('b', tf.reduce_mean(b))
+        if W_nograd is not None:
+            W = tf.multiply(W, W_nograd)
         out = tf.add(tf.matmul(invar, W), b, name='preactivation')
-        tf.summary.histogram('preactivation', out)
-        if activation_fn is not None:
-            out = activation_fn(out, name='postactivation')
-            tf.summary.histogram('postactivation', out)
+        out = activation_fn(out, name='postactivation')
+        tf.summary.histogram('postactivation', out)
     return out
 
 
@@ -45,11 +53,13 @@ class NN(object):
         arch: A list of integers, each corresponding to the number
             of units in the NN's hidden layer.
         ntype: 'plain', 'highway', or 'residual'.
-        name: Name prepended to all variables in the graph.
+        nograd: If True, add a binary flag to the first-layer
+            weight matrix that sets the weight to 0 if the input is nan.
     """
     def __init__(self, x_dim, y_dim, arch=[1024],
-            ntype='plain', **kwargs):
+            ntype='plain', nograd=True, **kwargs):
         # Bookkeeping.
+        self.y_dim = y_dim
         self.arch = arch + [y_dim]
         self.ntype = ntype
         self.x_tf = tf.placeholder(
@@ -58,7 +68,7 @@ class NN(object):
             tf.float32, [None, y_dim], name='outputs')
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
         self.keep_prob = tf.placeholder(tf.float32, name='dropout')
-        self.y_dim = y_dim
+        self.W_nograd_tf = tf.placeholder(tf.float32, [x_dim, arch[0]], name='W_nograd')
 
         # Inference.
         self.y_pred = self.define_nn()
@@ -89,17 +99,21 @@ class NN(object):
         """
         x_dim = self.x_tf.get_shape().as_list()[1]
         y_pred = self.x_tf
+
         if self.ntype not in ['residual', 'highway', 'plain']:
             raise ValueError('Network type not available.')
+
+        # Check that (for Highway and Residual nets) the layers have equal size.
         if self.ntype != 'plain':
-            # Check that (for Highway and Residual nets) layers have equal size.
             for layer_id in range(len(self.arch)-1):
                 if self.arch[layer_id] != self.arch[0]:
                     raise ValueError('Highway and Residual nets require all' 
                         'layers to be the same size.')
-            # Make sure the input has the same size too.
+
+            # Reshape the input accordingly.
             with tf.variable_scope('layerreshape'):
-                y_pred = fully_connected(y_pred, self.arch[0])
+                y_pred = fully_connected(y_pred, self.arch[0],
+                    W_nograd=self.W_nograd_tf)
                 y_pred = tf.nn.dropout(y_pred, keep_prob=self.keep_prob)
 
         for layer_id in range(len(self.arch)):
@@ -109,19 +123,25 @@ class NN(object):
 
                 # Transform the input.
                 with tf.variable_scope('transform'):
-                    if layer_id < len(self.arch) - 1:
+                    if 0 < layer_id < len(self.arch) - 1:
                         y_transform = tf.nn.elu(y_transform)
                         y_transform = tf.nn.dropout(
                                 y_transform, keep_prob=self.keep_prob)
-                    y_transform = fully_connected(y_transform, n_out)
+                    if layer_id == 0 and self.ntype == 'plain':
+                        y_transform = fully_connected(y_transform,
+                            n_out, W_nograd=self.W_nograd_tf)
+                    else:
+                        y_transform = fully_connected(y_transform, n_out)
 
                 # Propagate the original input in Residual and Highway nets.
                 if (layer_id < len(self.arch)-1 and self.ntype != 'plain'):
+
                     if self.ntype == 'highway':
                         with tf.variable_scope('highway'):
                             gate = fully_connected(y_pred, n_out,
                                 activation_fn=tf.nn.sigmoid, name='gate')
                             y_pred = y_transform * gate + y_pred * (1 - gate)
+
                     elif self.ntype == 'residual':
                         with tf.variable_scope('residual'):
                             if layer_id < len(self.arch) - 1:
@@ -141,7 +161,7 @@ class NN(object):
                     self.lr_tf).minimize(self.loss_tf)
 
     def define_scalers(self):
-        return StandardScaler(), StandardScaler()
+        return scalers.StandardScaler(), scalers.StandardScaler()
 
     def predict(self, x, sess):
         """ Compute the output for given data.
@@ -154,12 +174,12 @@ class NN(object):
         Returns:
             y (n_samples, y_dim): Predicted outputs.
         """
-        try:
-            x = self.scaler_x.transform(x)
-        except NotFittedError:
-            print('Warning: scalers are not fitted.')
+        nans = np.isnan(x)
+        x = self.scaler_x.transform(x)
+        W_nograd = compute_nograd(nans, self.arch[0])
         y_pred = sess.run(self.y_pred,
                 {self.x_tf: x,
+                 self.W_nograd_tf: W_nograd,
                  self.keep_prob: 1.})
         return self.scaler_y.inverse_transform(y_pred)
 
@@ -192,18 +212,13 @@ class NN(object):
         n_val = int(n_samples * float(valsize))
         if valsize > 0:
             n_val = max(1, n_val)
+        nans = np.isnan(x)
         ids_perm = np.random.permutation(n_samples)
-        self.valid_ids = ids_perm[:n_val]
+        x[ids_perm[:-n_val]] = self.scaler_x.fit_transform(x[ids_perm[:-n_val]])
+        y[ids_perm[:-n_val]] = self.scaler_y.fit_transform(y[ids_perm[:-n_val]])
         if n_val > 0:
-            x_val = x[self.valid_ids]
-            y_val = y[self.valid_ids]
-        x_tr = x[ids_perm[n_val:]]
-        y_tr = y[ids_perm[n_val:]]
-        x_tr = self.scaler_x.fit_transform(x_tr)
-        y_tr = self.scaler_y.fit_transform(y_tr)
-        if n_val > 0:
-            x_val = self.scaler_x.transform(x_val)
-            y_val = self.scaler_y.transform(y_val)
+            x[ids_perm[-n_val:]] = self.scaler_x.transform(x[ids_perm[-n_val:]])
+            y[ids_perm[-n_val:]] = self.scaler_y.transform(y[ids_perm[-n_val:]])
 
         # Train the neural net.
         tr_losses = np.zeros(epochs)
@@ -213,30 +228,23 @@ class NN(object):
         batch_size = min(batch_size, n_samples-n_val)
 
         for epoch_id in range(epochs):
-            batch_ids = np.random.choice(n_samples-n_val,
-                batch_size, replace=False)
-            if summary is not None:
-                tr_loss, s = sess.run(
-                    [self.loss_tf, summary],
-                    {self.x_tf: x_tr[batch_ids],
-                     self.y_tf: y_tr[batch_ids],
-                     self.keep_prob: 1.})
-            else:
-                tr_loss = sess.run(
-                    self.loss_tf,
-                    {self.x_tf: x_tr[batch_ids],
-                     self.y_tf: y_tr[batch_ids],
-                     self.keep_prob: 1.})
-            sess.run(self.train_op_tf,
-                          {self.x_tf: x_tr[batch_ids],
-                           self.y_tf: y_tr[batch_ids],
-                           self.keep_prob: dropout_keep_prob,
-                           self.lr_tf: lr})
+            batch_ids = ids_perm[np.random.choice(n_samples-n_val,
+                batch_size, replace=False)]
+            W_nograd = compute_nograd(nans[batch_ids], self.arch[0])
+            _, tr_loss, s = sess.run(
+                [self.train_op_tf, self.loss_tf,
+                 summary if summary is not None else 1.],
+                {self.x_tf: x[batch_ids],
+                 self.y_tf: y[batch_ids],
+                 self.W_nograd_tf: W_nograd,
+                 self.keep_prob: dropout_keep_prob,
+                 self.lr_tf: lr})
             if n_val > 0:
                 val_loss = sess.run(self.loss_tf,
-                                         {self.x_tf: x_val,
-                                          self.y_tf: y_val,
-                                          self.keep_prob: 1.})
+                    {self.x_tf: x[ids_perm[-n_val:],
+                     self.y_tf: y[ids_perm[-n_val:],
+                     self.W_nograd_tf: W_nograd,
+                     self.keep_prob: 1.})
             else:
                 val_loss = tr_loss
 

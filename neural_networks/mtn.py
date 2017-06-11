@@ -5,33 +5,10 @@ import itertools
 from typing import List
 
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 
 from neural_networks import nn
-
-
-class HalfScaler(object):
-    def __init__(self, ignore_dim):
-        self.scaler = StandardScaler()
-        self.ignore_dim = ignore_dim
-
-    def fit(self, x):
-        self.scaler.fit(x[:, self.ignore_dim:])
-
-    def fit_transform(self, x):
-        self.scaler.fit(x[:, self.ignore_dim:])
-        xtr = self.scaler.transform(x[:, self.ignore_dim:])
-        return np.hstack([x[:, :self.ignore_dim], xtr])
-
-    def transform(self, x):
-        xtr = self.scaler.transform(x[:, self.ignore_dim:])
-        return np.hstack([x[:, :self.ignore_dim], xtr])
-
-    def inverse_transform(self, y):
-        ytr = self.scaler.inverse_transform(y[:, self.ignore_dim:])
-        return np.hstack([y[:, self.ignore_dim], ytr])
+from neural_networks import scalers
 
 
 class MTN(nn.NN):
@@ -60,8 +37,8 @@ class MTN(nn.NN):
             self.y_tf, self.y_pred * self.x_tf[:, :y_dim])
 
     def define_scalers(self):
-        xscale = HalfScaler(ignore_dim=self.y_dim)
-        yscale = StandardScaler()
+        xscale = scalers.HalfScaler(ignore_dim=self.y_dim)
+        yscale = scalers.StandardScaler()
         return xscale, yscale
 
 def make_data(n_samples, nosie_std, x, y, degree=3):
