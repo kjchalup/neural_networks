@@ -1,4 +1,9 @@
-""" Generative Adversarial Networks. """
+""" Generative Adversarial Network implementation.
+
+This is in fact the Least-Squares GAN, as I found it
+yields best results so far. However, the GAN market
+is developing rapidly.
+"""
 import sys
 import time
 import itertools
@@ -16,7 +21,7 @@ from neural_networks import nn
 
 class GAN(object):
     def __init__(self, x_dim, noise_dim, g_arch=[128, 128],
-        g_ntype='plain', d_arch=[128, 128], d_ntype='plain', clip=.01, **kwargs):
+        g_ntype='plain', d_arch=[128, 128], d_ntype='plain', **kwargs):
         # Bookkeeping.
         self.x_dim = x_dim
         self.noise_dim = noise_dim
@@ -32,7 +37,6 @@ class GAN(object):
         self.g_ntype = g_ntype
         self.d_arch = d_arch + [1]
         self.d_ntype = d_ntype
-        self.clip = clip
         
         # Define the Generator, Discriminator, and their losses.
         self.y_from_x, self.y_from_z, self.x_from_z = self.define_gan()
@@ -42,9 +46,6 @@ class GAN(object):
         with tf.variable_scope('d_loss'):
             self.d_loss_tf = self.define_dloss()
             self.d_train_tf = self.define_dtrain()
-
-        # Define the weight clipper for Wasserstein GANs.
-        self.clip_tf = self.define_clip()
 
         # Define the data scalers.
         self.scaler_x = self.define_scalers()
@@ -129,19 +130,13 @@ class GAN(object):
         return tf.train.AdamOptimizer(self.lr_tf).minimize(
             self.d_loss_tf,  var_list=var_list)
     
-    def define_clip(self):
-        all_vars = tf.trainable_variables()
-        var_list = [v for v in all_vars if v.name.startswith('discriminator/')]
-        clip_tf = [var.assign(tf.clip_by_value(var, -self.clip, self.clip))
-            for var in var_list]
-        return clip_tf
-
-    def fit(self, x, sess, epochs=1000, clip=.01,
+    def fit(self, x, sess, epochs=1000,
             batch_size=32, lr=1e-3, n_diters=100, nn_verbose=True, **kwargs):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
         x = self.scaler_x.fit_transform(x)
         for epoch in range(epochs):
+
             # Train the discriminator.
             for k in range(n_diters):
                 z_noise = self.sample_noise(batch_size)
@@ -151,7 +146,7 @@ class GAN(object):
                      self.z_tf: z_noise,
                      self.keep_prob: 1.,
                      self.lr_tf: lr})
-                #sess.run(self.clip_tf)
+
             # Train the generator.
             z_noise = self.sample_noise(batch_size)
             _, gloss = sess.run([self.g_train_tf, self.g_loss_tf],
@@ -159,7 +154,6 @@ class GAN(object):
                  self.lr_tf: lr,
                  self.keep_prob: 1.})
             
-            print('\n\n')
             # Bookkeeping.
             tr_time = time.time() - start_time
             if nn_verbose:
@@ -185,15 +179,14 @@ if __name__=="__main__":
     n_samples = 100000
     kwargs = {
               'epochs': 1000,
-              'g_arch': [64] * 8,
+              'g_arch': [128]*10,
               'g_ntype': 'plain',
-              'd_arch': [64] * 8,
+              'd_arch': [128]*10,
               'd_ntype': 'plain',
               'n_diters': 100,
               'lr': 1e-4,
               'noise_dim': 1,
               'batch_size': 32,
-              'clip': .05
              }
     X = np.vstack([np.random.randn(int(n_samples/2), 1)*.1+6,
                    np.random.randn(int(n_samples/2), 1)*.2+3])
@@ -202,8 +195,10 @@ if __name__=="__main__":
     X *= -4
     X += 10
     X2 = -X
-    X = np.vstack([X, X2])[np.random.choice(n_samples*2, n_samples)]
-    #X = np.random.rand(n_samples, 1) + 4
+    small = min(X.min(), X2.min())
+    large = max(X.max(), X2.max())
+    X3 = np.random.uniform(small, large, size=(n_samples, 1))
+    X = np.vstack([X, X2, X3])[np.random.choice(n_samples*3, n_samples)]
     gan = GAN(x_dim=X.shape[1], **kwargs)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())

@@ -164,7 +164,7 @@ class NN(object):
         return self.scaler_y.inverse_transform(y_pred)
 
     def fit(self, x, y, sess, epochs=1000, batch_size=32,
-            lr=1e-3, nn_verbose=False,
+            lr=1e-3, valsize=.1, nn_verbose=False, 
             dropout_keep_prob=1., writer=None, summary=None, **kwargs):
         """ Train the MDN to maximize the data likelihood.
 
@@ -175,6 +175,7 @@ class NN(object):
             epochs (int): How many batches to train for.
             batch_size (int): Training batch size.
             lr (float): Learning rate.
+            valsize (float): Proportion of data (between 0 and 1) for validation.
             nn_verbose (bool): Display training progress messages (or not).
             dropout_keep_prob (float): Probability of keeping a unit on.
             writer: A writer object for Tensorboard bookkeeping.
@@ -186,17 +187,23 @@ class NN(object):
         """
         # Split data into a training and validation set.
         n_samples = x.shape[0]
-        n_val = int(n_samples * .1)
+        if not 0 <= valsize < 1:
+            raise ValueError('Invalid validation dataset size')
+        n_val = int(n_samples * float(valsize))
+        if valsize > 0:
+            n_val = max(1, n_val)
         ids_perm = np.random.permutation(n_samples)
         self.valid_ids = ids_perm[:n_val]
-        x_val = x[self.valid_ids]
-        y_val = y[self.valid_ids]
+        if n_val > 0:
+            x_val = x[self.valid_ids]
+            y_val = y[self.valid_ids]
         x_tr = x[ids_perm[n_val:]]
         y_tr = y[ids_perm[n_val:]]
         x_tr = self.scaler_x.fit_transform(x_tr)
         y_tr = self.scaler_y.fit_transform(y_tr)
-        x_val = self.scaler_x.transform(x_val)
-        y_val = self.scaler_y.transform(y_val)
+        if n_val > 0:
+            x_val = self.scaler_x.transform(x_val)
+            y_val = self.scaler_y.transform(y_val)
 
         # Train the neural net.
         tr_losses = np.zeros(epochs)
@@ -225,10 +232,13 @@ class NN(object):
                            self.y_tf: y_tr[batch_ids],
                            self.keep_prob: dropout_keep_prob,
                            self.lr_tf: lr})
-            val_loss = sess.run(self.loss_tf,
-                                     {self.x_tf: x_val,
-                                      self.y_tf: y_val,
-                                      self.keep_prob: 1.})
+            if n_val > 0:
+                val_loss = sess.run(self.loss_tf,
+                                         {self.x_tf: x_val,
+                                          self.y_tf: y_val,
+                                          self.keep_prob: 1.})
+            else:
+                val_loss = tr_loss
 
             if writer:
                 # Add summaries for Tensorboard.
