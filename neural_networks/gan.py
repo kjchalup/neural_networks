@@ -6,20 +6,25 @@ is developing rapidly.
 """
 import sys
 import time
-import itertools
-from typing import List
-from tempfile import NamedTemporaryFile
 
 import numpy as np
 from matplotlib import pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.exceptions import NotFittedError
 import tensorflow as tf
 
 from neural_networks import nn
 
-
 class GAN(object):
+    """ A Least-Squares GAN.
+
+    Args:
+        x_dim (int): Data dimensionality.
+        noise_dim (int): Generator random input dimensionality.
+        g_arch ([int, int]): Generator architecture.
+        g_ntype (str): Generator net type (see neural_networks.nn).
+        d_arch ([int, int]): Discriminator architecture.
+        d_ntype (str): Discriminator net type (see neural_networks.nn).
+    """
     def __init__(self, x_dim, noise_dim, g_arch=[128, 128],
         g_ntype='plain', d_arch=[128, 128], d_ntype='plain', **kwargs):
         # Bookkeeping.
@@ -51,9 +56,15 @@ class GAN(object):
         self.scaler_x = self.define_scalers()
 
     def define_scalers(self):
+        """ Use the MinMax scaler, as generator will have tanh outputs. """
         return MinMaxScaler(feature_range=(-1, 1))
 
     def define_nn(self, arch, ntype, in_tf):
+        """ Define the GAN twin networks.
+
+        Args:
+            arch
+        """
         out = in_tf
         # First, define how noise propagates through the generator.
         if ntype not in ['residual', 'highway', 'plain']:
@@ -130,8 +141,8 @@ class GAN(object):
         return tf.train.AdamOptimizer(self.lr_tf).minimize(
             self.d_loss_tf,  var_list=var_list)
     
-    def fit(self, x, sess, epochs=1000,
-            batch_size=32, lr=1e-3, n_diters=100, nn_verbose=True, **kwargs):
+    def fit(self, x, sess, epochs=1000, batch_size=32, lr=1e-3,
+            n_diters=100, nn_verbose=True, **kwargs):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
         x = self.scaler_x.fit_transform(x)
@@ -164,6 +175,15 @@ class GAN(object):
                 sys.stdout.flush()
 
     def sample(self, n_samples):
+        """ Sample from the distribution defined by the generator.
+
+        Args:
+            n_samples (int): Number of samples to create.
+
+        Returns:
+            samples (n_samples, x_dim): Samples defined by the
+                generator's distribution.
+        """
         z_noise = self.sample_noise(n_samples)
         x = sess.run(self.x_from_z,
             {self.z_tf: z_noise,
@@ -171,6 +191,14 @@ class GAN(object):
         return self.scaler_x.inverse_transform(x)
 
     def sample_noise(self, n_samples):
+        """ Sample inputs to the generator.
+
+        Args:
+            n_samples (int): Number of noise-samples.
+
+        Returns:
+            noise (n_samples, self.noise_dim): Noise samples.
+        """
         return np.random.randn(n_samples, self.noise_dim)
 
 if __name__=="__main__":
