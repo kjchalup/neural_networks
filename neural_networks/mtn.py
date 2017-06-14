@@ -52,6 +52,34 @@ def make_data(n_samples, nosie_std, x, y, degree=3):
         y += np.random.rand(*y.shape) * noise_std
         yield (x[data_ids], y[data_ids])
 
+def concatenate_tasks(X, Y, task_start, task_end, samples, n_test, blank_rows=None):
+    n_tasks = task_end - task_start
+    X_multi = np.zeros((samples * n_tasks, n_tasks + dim))
+    Y_multi = np.zeros((samples * n_tasks, n_tasks))
+    X_test = np.zeros((n_test * n_tasks, n_tasks + dim))
+    Y_test = np.zeros((n_test * n_tasks, n_tasks))
+    for task_id_id, task_id in enumerate(range(task_start, task_end)):
+        X_multi[task_id_id*samples : (task_id_id+1)*samples,
+                task_id_id:task_id_id+1] = 1.
+        data = np.array(X[task_id])
+        if blank_rows is not None:
+            blank_row = blank_rows[task_id]
+            data[:, blank_row*28 : (blank_row+1)*28] = np.nan
+        X_multi[task_id_id*samples : (task_id_id+1)*samples, n_tasks:] = data[:samples]
+        Y_multi[task_id_id*samples : (task_id_id+1)*samples,
+                task_id_id:task_id_id+1] = Y[task_id_id][:samples]
+
+        X_test[task_id_id*n_test : (task_id_id+1)*n_test, task_id_id:task_id_id+1] = 1.
+        data = np.array(X[task_id])
+        #if blank_rows is not None:
+        #    data[:, blank_row*28 : (blank_row+1)*28] = np.nan
+        X_test[task_id_id*n_test : (task_id_id+1)*n_test, n_tasks:] = data[samples:]
+        Y_test[task_id_id*n_test : (task_id_id+1)*n_test,
+                task_id_id:task_id+1] = Y[task_id_id][samples:]
+
+    return X_multi, Y_multi, X_test, Y_test
+
+
 if __name__=="__main__":
     """ Check that everything works as expected. """
     print('===============================================================')
@@ -69,16 +97,17 @@ if __name__=="__main__":
 
     # Fix task and nn parameters.
     #n_task_list = [1, 4, 8, 16, 32, 64]
-    n_task_list = [1, 4, 8, 16, 28]
+    n_task_list = [1, 2, 4, 8, 16]
     max_tasks = max(n_task_list)
+    blank_rows = np.random.choice(28, max_tasks)
     samples = 100
     epochs = 10000
     noise_std = .1
     n_test = 10000
     kwargs = {
-              'arch': [128] * 2,
-              'ntype': 'plain',
-              'batch_size': 1,
+              'arch': [32]*30, #[32] * 30,
+              'ntype': 'highway',
+              'batch_size': 32,
               'lr': 1e-4,
               'valsize': .3
              }
@@ -88,78 +117,57 @@ if __name__=="__main__":
     np.random.seed(1)
     data = make_data(samples + n_test, noise_std, mX, mY)
     X, Y = zip(*[next(data) for _ in range(max_tasks)])
-    errs_mtn = []
+    errs_mtn = np.zeros((len(n_task_list), max_tasks))
 
-    for n_tasks in n_task_list:
-        print('MTN training on {} tasks...'.format(n_tasks))
-        X_multi = np.zeros((samples * n_tasks, n_tasks + dim))
-        Y_multi = np.zeros((samples * n_tasks, n_tasks))
-        X_test = np.zeros((n_test * n_tasks, n_tasks + dim))
-        Y_test = np.zeros((n_test * n_tasks, n_tasks))
-        for task_id, x in enumerate(X[:n_tasks]):
-            X_multi[task_id*samples : (task_id+1)*samples,
-                    task_id:task_id+1] = 1.
-            data = np.array(x[:samples])
-            data[:, task_id*28 : (task_id+1)*28] = np.nan
-            X_multi[task_id*samples : (task_id+1)*samples:,
-                    n_tasks:] = data
-            Y_multi[task_id*samples : (task_id+1)*samples,
-                    task_id:task_id+1] = Y[task_id][:samples]
+    for n_tasks_id, n_tasks in enumerate(n_task_list):
+        print('=' * 70)
+        print('Starting {}-split training'.format(n_tasks))
+        print('=' * 70)
+        for task_start in range(0, max_tasks, n_tasks):
+            print('task_start = {}'.format(task_start))
+            X_multi, Y_multi, X_test, Y_test = concatenate_tasks(
+                X, Y, task_start, task_start + n_tasks, samples,
+                n_test, blank_rows)
 
-            X_test[task_id*n_test : (task_id+1)*n_test, task_id:task_id+1] = 1.
-            data = np.array(x[samples:])
-            data[:, task_id*28 : (task_id+1)*28] = np.nan
-            X_test[task_id*n_test : (task_id+1)*n_test, n_tasks:] = data
-            Y_test[task_id*n_test : (task_id+1)*n_test,
-                    task_id:task_id+1] = Y[task_id][samples:]
-            
+            # Create the Tensorflow graph.
+            mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks, **kwargs)
+            with tf.Session() as sess:
+                # Define the Tensorflow session, and its initializer op.
+                sess.run(tf.global_variables_initializer())
 
-        # Create the Tensorflow graph.
-        mtnet = MTN(x_dim=X_multi.shape[1], y_dim=n_tasks, **kwargs)
-        with tf.Session() as sess:
-            # Define the Tensorflow session, and its initializer op.
-            sess.run(tf.global_variables_initializer())
+                # Fit the net.
+                mtnet.fit(X_multi, Y_multi, sess=sess, nn_verbose=True,
+                        epochs=epochs, **kwargs)
 
-            # Use a writer object for Tensorboard.
-            summary = tf.summary.merge_all()
-            writer = tf.summary.FileWriter('logs/{}'.format('mtn'))
-            writer.add_graph(sess.graph)
-
-            # Fit the net.
-            mtnet.fit(X_multi, Y_multi, sess=sess, nn_verbose=True,
-                    epochs=epochs, **kwargs)
-
-            errs_mtn.append([])
-            for task_id in range(n_tasks):
-                mtnpred = mtnet.predict(X_test[task_id*n_test:(task_id+1)*n_test],
-                    sess=sess)
-                mtnpred = mtnpred[:, task_id:task_id+1]
-                errs_mtn[-1].append(np.sqrt(np.mean((
-                    mtnpred - Y_test[task_id*n_test:(task_id+1)*n_test,
-                        task_id:task_id+1])**2)))
-        tf.reset_default_graph()
+                for task_id in range(n_tasks):
+                    mtnpred = mtnet.predict(X_test[task_id*n_test:(task_id+1)*n_test],
+                        sess=sess)
+                    mtnpred = mtnpred[:, task_id:task_id+1]
+                    errs_mtn[n_tasks_id, task_start+task_id] = (np.sqrt(np.mean((
+                        mtnpred - Y_test[task_id*n_test:(task_id+1)*n_test,
+                            task_id:task_id+1])**2)))
+            tf.reset_default_graph()
         print('Done\n.')
 
-    plt.figure(figsize=(16, 8))
-    accuracies = np.zeros((len(n_task_list), max(n_task_list)))
-    for n_tasks_id, n_tasks in enumerate(n_task_list):
-        accuracies[n_tasks_id, :n_tasks] = errs_mtn[n_tasks_id]
-
-    vmax = np.max(accuracies)
+    vmax = np.max(errs_mtn)
     plt.figure(figsize=(10, 10))
-    cutoff = 1
-    n_tasks_cutoff = n_task_list[cutoff]
+    plt.subplot(2, 1, 1)
     barw = .8 / len(n_task_list)
     for n_tasks_id in range(len(n_task_list)):
-        n_tasks = min(n_tasks_cutoff, n_task_list[n_tasks_id])
         plt.title('MTN performance as number of tasks grows'.format(
             n_task_list[n_tasks_id]))
-        plt.xlabel('Task ID')
-        plt.ylabel('MTN accuracy')
-        plt.bar(np.arange(n_tasks_cutoff+1) + n_tasks_id * barw,
+        plt.xlabel('task ID')
+        plt.ylabel('error')
+        plt.bar(np.arange(max_tasks) + n_tasks_id * barw,
                 width=barw,
-                height=accuracies[n_tasks_id, :n_tasks_cutoff],
+                height=errs_mtn[n_tasks_id],
                 label='{}'.format(n_task_list[n_tasks_id]))
         plt.ylim([0, vmax])
     plt.legend(loc=0)
+
+    plt.subplot(2, 1, 2)
+    plt.xlabel('n_tasks')
+    plt.ylabel('average error')
+    plt.plot(n_task_list, errs_mtn.mean(axis=1), 'o')
+
     plt.savefig('res.png')
