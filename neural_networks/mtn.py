@@ -8,7 +8,7 @@ from neural_networks import scalers
 
 class MTN(nn.NN):
     def __init__(self, x_dim, y_dim,
-            arch=[128, 128], ntype='plain', name='mtn', **kwargs):
+            arch=[128, 128], ntype='plain', **kwargs):
         """ A multi-task network. 
 
         The output is a concatenation of the outputs for all n_task tasks.
@@ -22,7 +22,7 @@ class MTN(nn.NN):
         These two input parts should be concatenated.
         """
         super().__init__(x_dim, y_dim, arch=arch,
-                ntype=ntype, name=name, **kwargs)
+                ntype=ntype, **kwargs)
 
     def define_loss(self):
         x_dim = self.x_tf.get_shape().as_list()[1]

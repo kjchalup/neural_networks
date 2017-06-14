@@ -14,6 +14,32 @@ import tensorflow as tf
 
 from neural_networks import nn
 
+
+class SkeletonNN(nn.NN):
+    __doc__ = """ A neural net skeleton.
+    
+    Used by the GAN class to create neural net graphs. """
+    __doc__ += nn.NN.__doc__
+
+    def __init__(self, x_tf, dropout_tf, **kwargs):
+       super().__init__(x_tf=x_tf, dropout_tf=dropout_tf,**kwargs)
+
+    def define_loss(self):
+        return None
+
+    def define_training(self):
+        return None
+
+    def define_scalers(self):
+        return None, None
+
+    def predict(self):
+        pass
+
+    def fit(self):
+        pass
+
+
 class GAN(object):
     """ A Least-Squares GAN.
 
@@ -36,15 +62,16 @@ class GAN(object):
             tf.float32, [None, noise_dim], name='z_input')
         self.lr_tf = tf.placeholder(
             tf.float32, name='learning_rate')
-        self.keep_prob = tf.placeholder(
-            tf.float32, name='dropout_rate')
+        self.dropout_tf = tf.placeholder(
+            tf.float32, name='dropout')
         self.g_arch = g_arch + [x_dim]
         self.g_ntype = g_ntype
         self.d_arch = d_arch + [1]
         self.d_ntype = d_ntype
         
         # Define the Generator, Discriminator, and their losses.
-        self.y_from_x, self.y_from_z, self.x_from_z = self.define_gan()
+        self.y_from_x, self.y_from_z, self.x_from_z =\
+            self.define_gan()
         with tf.variable_scope('g_loss'):
             self.g_loss_tf = self.define_gloss()
             self.g_train_tf = self.define_gtrain()
@@ -59,69 +86,24 @@ class GAN(object):
         """ Use the MinMax scaler, as generator will have tanh outputs. """
         return MinMaxScaler(feature_range=(-1, 1))
 
-    def define_nn(self, arch, ntype, in_tf):
-        """ Define the GAN twin networks.
-
-        Args:
-            arch
-        """
-        out = in_tf
-        # First, define how noise propagates through the generator.
-        if ntype not in ['residual', 'highway', 'plain']:
-            raise ValueError('Network type not available.')
-        if ntype != 'plain':
-            # Check that (for Highway and Residual nets) layers have equal size.
-            for layer_id in range(len(arch)-1):
-                if arch[layer_id] != arch[0]:
-                    raise ValueError('Highway and Residual nets require all' 
-                        'layers to be the same size.')
-            # Make sure the input has the same size too.
-            with tf.variable_scope('layerreshape'):
-                out = nn.fully_connected(out, arch[0])
-
-        for layer_id in range(len(arch)):
-            n_out = arch[layer_id]
-            with tf.variable_scope('layer{}'.format(layer_id)):
-                out_transform = out
-
-                # Transform the input.
-                with tf.variable_scope('transform'):
-                    if layer_id < len(arch) - 1:
-                        out_transform = tf.nn.elu(out_transform)
-                    out_transform = nn.fully_connected(out_transform, n_out)
-
-                # Propagate the original input in Residual and Highway nets.
-                if (layer_id < len(arch)-1 and ntype != 'plain'):
-                    if ntype == 'highway':
-                        with tf.variable_scope('highway'):
-                            gate = nn.fully_connected(out, n_out,
-                                biases_initializer=tf.constant_initializer(.3),
-                                activation_fn=tf.nn.sigmoid, name='gate')
-                            out = out_transform * gate + out * (1 - gate)
-                    elif ntype == 'residual':
-                        with tf.variable_scope('residual'):
-                            if layer_id < len(arch) - 1:
-                                out_transform = tf.nn.elu(out_transform)
-                            out_transform = nn.fully_connected(out_transform, n_out)
-                            out += out_transform
-                else:
-                    out = out_transform
-        return out
-
     def define_gan(self):
         with tf.variable_scope('generator'):
-            x_from_z = tf.nn.tanh(self.define_nn(
-                self.g_arch, self.g_ntype, self.z_tf))
+            gen_net = SkeletonNN(x_dim=self.noise_dim, y_dim=self.x_dim,
+                arch=self.g_arch, ntype=self.g_ntype,
+                x_tf=self.z_tf, dropout_tf=self.dropout_tf)
+            x_from_z = tf.nn.tanh(gen_net.y_pred)
         with tf.variable_scope('discriminator') as scope:
-            y_from_x = self.define_nn(
-                self.d_arch, self.d_ntype, self.x_tf)
+            disc_net = SkeletonNN(x_dim=self.x_dim, y_dim=1,
+                arch=self.d_arch, ntype=self.d_ntype,
+                x_tf=self.x_tf, dropout_tf=self.dropout_tf)
+            y_from_x = disc_net.y_pred
             scope.reuse_variables()
-            y_from_z = self.define_nn(
-                self.d_arch, self.d_ntype, x_from_z)
+            y_from_z = SkeletonNN(x_dim=self.x_dim, y_dim=1,
+                arch=self.d_arch, ntype=self.d_ntype,
+                x_tf=x_from_z, dropout_tf=self.dropout_tf).y_pred
         return y_from_x, y_from_z, x_from_z
-    
+
     def define_gloss(self):
-        # return -tf.reduce_mean(self.y_from_z)
         return .5 * tf.reduce_mean(tf.pow(self.y_from_z - 1, 2))
 
     def define_gtrain(self):
@@ -131,39 +113,38 @@ class GAN(object):
             self.g_loss_tf, var_list=var_list)
 
     def define_dloss(self, flip=False):
-        # return -tf.reduce_mean(self.y_from_x - self.y_from_z)
         return .5 * (tf.reduce_mean(tf.pow(self.y_from_x - 1, 2)
-            + tf.pow(self.y_from_z, 2)))
+                                    + tf.pow(self.y_from_z, 2)))
 
     def define_dtrain(self):
         all_vars = tf.trainable_variables()
         var_list = [v for v in all_vars if v.name.startswith('discriminator/')]
         return tf.train.AdamOptimizer(self.lr_tf).minimize(
             self.d_loss_tf,  var_list=var_list)
-    
+
     def fit(self, x, sess, epochs=1000, batch_size=32, lr=1e-3,
             n_diters=100, nn_verbose=True, **kwargs):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
         x = self.scaler_x.fit_transform(x)
         for epoch in range(epochs):
-
             # Train the discriminator.
             for k in range(n_diters):
                 z_noise = self.sample_noise(batch_size)
                 x_real = x[np.random.choice(x.shape[0], batch_size)]
+                feed_dict = {self.x_tf: x_real,
+                             self.z_tf: z_noise,
+                             self.dropout_tf: 1.,
+                             self.lr_tf: lr}
                 _, dloss = sess.run([self.d_train_tf, self.d_loss_tf],
-                    {self.x_tf: x_real,
-                     self.z_tf: z_noise,
-                     self.keep_prob: 1.,
-                     self.lr_tf: lr})
+                    feed_dict)
 
             # Train the generator.
             z_noise = self.sample_noise(batch_size)
-            _, gloss = sess.run([self.g_train_tf, self.g_loss_tf],
-                {self.z_tf: z_noise,
-                 self.lr_tf: lr,
-                 self.keep_prob: 1.})
+            feed_dict = {self.z_tf: z_noise,
+                         self.lr_tf: lr,
+                         self.dropout_tf: 1.}
+            _, gloss = sess.run([self.g_train_tf, self.g_loss_tf], feed_dict)
             
             # Bookkeeping.
             tr_time = time.time() - start_time
@@ -185,9 +166,9 @@ class GAN(object):
                 generator's distribution.
         """
         z_noise = self.sample_noise(n_samples)
-        x = sess.run(self.x_from_z,
-            {self.z_tf: z_noise,
-                self.keep_prob: 1.})
+        feed_dict = {self.z_tf: z_noise,
+                     self.dropout_tf: 1.}
+        x = sess.run(self.x_from_z, feed_dict)
         return self.scaler_x.inverse_transform(x)
 
     def sample_noise(self, n_samples):
@@ -201,21 +182,9 @@ class GAN(object):
         """
         return np.random.randn(n_samples, self.noise_dim)
 
-if __name__=="__main__":
-    from tensorflow.examples.tutorials.mnist import input_data
-    import matplotlib.pyplot as plt
-    n_samples = 100000
-    kwargs = {
-              'epochs': 1000,
-              'g_arch': [128]*10,
-              'g_ntype': 'plain',
-              'd_arch': [128]*10,
-              'd_ntype': 'plain',
-              'n_diters': 100,
-              'lr': 1e-4,
-              'noise_dim': 1,
-              'batch_size': 32,
-             }
+
+def sample_data(n_samples):
+    """ Sample data from a bimodal, discontinuous distribution. """
     X = np.vstack([np.random.randn(int(n_samples/2), 1)*.1+6,
                    np.random.randn(int(n_samples/2), 1)*.2+3])
     X = np.random.uniform(low=-5, high=-2, size=(n_samples, 1))
@@ -227,6 +196,25 @@ if __name__=="__main__":
     large = max(X.max(), X2.max())
     X3 = np.random.uniform(small, large, size=(n_samples, 1))
     X = np.vstack([X, X2, X3])[np.random.choice(n_samples*3, n_samples)]
+    return X
+
+
+if __name__=="__main__":
+    from tensorflow.examples.tutorials.mnist import input_data
+    import matplotlib.pyplot as plt
+    n_samples = 100000
+    kwargs = {
+              'epochs': 1000,
+              'g_arch': [128]*2,
+              'g_ntype': 'plain',
+              'd_arch': [128]*2,
+              'd_ntype': 'plain',
+              'n_diters': 100,
+              'lr': 1e-2,
+              'noise_dim': 10,
+              'batch_size': 32,
+             }
+    X = sample_data(n_samples)
     gan = GAN(x_dim=X.shape[1], **kwargs)
     with tf.Session() as sess:
         sess.run(tf.global_variables_initializer())
@@ -246,9 +234,8 @@ if __name__=="__main__":
     vmax = max(X.max(), X_samples.max())
     fig = plt.figure(figsize=(10, 10))
     plt.hist(X.flatten(), bins=np.linspace(vmin, vmax, 100),
-        label='true', alpha=.5)
+             label='true', alpha=.5)
     plt.hist(X_samples.flatten(), bins=np.linspace(vmin, vmax, 100),
-        label='samples', alpha=.5)
+             label='samples', alpha=.5)
     plt.legend(loc=0)
     plt.show()
-

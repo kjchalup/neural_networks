@@ -55,20 +55,27 @@ class NN(object):
         zeronans: If True, nans in inputs/outputs will be simply
             set to zero (after data normalization). If False, they
             will be ignored using a W_nograd matrix -- see fit().
+        x_tf (tf.placeholder): If given, use as graph input.
     """
     def __init__(self, x_dim, y_dim, arch=[1024],
-        ntype='plain', zeronans=True, **kwargs):
+        ntype='plain', zeronans=True, x_tf=None, dropout_tf=None, **kwargs):
         # Bookkeeping.
         self.y_dim = y_dim
         self.arch = arch + [y_dim]
         self.ntype = ntype
         self.zeronans = zeronans
-        self.x_tf = tf.placeholder(
-            tf.float32, [None, x_dim], name='inputs')
+        if x_tf is None:
+            self.x_tf = tf.placeholder(
+                tf.float32, [None, x_dim], name='inputs')
+        else:
+            self.x_tf = x_tf
         self.y_tf = tf.placeholder(
             tf.float32, [None, y_dim], name='outputs')
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
-        self.keep_prob = tf.placeholder(tf.float32, name='dropout')
+        if dropout_tf is None:
+            self.keep_prob = tf.placeholder(tf.float32, name='dropout')
+        else:
+            self.keep_prob = dropout_tf
         if not self.zeronans:
             self.W_nograd_tf = tf.placeholder(
                 tf.float32, [x_dim, arch[0]], name='W_nograd')
@@ -79,7 +86,6 @@ class NN(object):
         # Loss.
         with tf.name_scope('loss'):
             self.loss_tf = self.define_loss()
-        tf.summary.scalar('loss', self.loss_tf)
 
         # Training.
         self.train_op_tf = self.define_training()
@@ -137,7 +143,6 @@ class NN(object):
 
                 # Propagate the original input in Residual and Highway nets.
                 if layer_id < len(self.arch)-1 and self.ntype != 'plain':
-
                     if self.ntype == 'highway':
                         with tf.variable_scope('highway'):
                             gate = fully_connected(
@@ -158,7 +163,9 @@ class NN(object):
         return y_pred
 
     def define_loss(self):
-        return tf.losses.mean_squared_error(self.y_tf, self.y_pred)
+        loss = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
+        tf.summary.scalar('loss', loss)
+        return loss
 
     def define_training(self):
         return tf.train.AdamOptimizer(
@@ -181,7 +188,8 @@ class NN(object):
         nans = np.isnan(x)
         x = self.scaler_x.transform(x)
         x[np.isnan(x)] = 0
-        feed_dict = {self.x_tf: x, self.keep_prob: 1.}
+        feed_dict = {self.x_tf: x,
+                     self.keep_prob: 1.}
         if not self.zeronans:
             W_nograd = compute_nograd(nans, self.arch[0])
             feed_dict[self.W_nograd_tf] = W_nograd
@@ -247,8 +255,10 @@ class NN(object):
         for epoch_id in range(epochs):
             batch_ids = ids_perm[n_val +
                 np.random.choice(n_samples-n_val,  batch_size, replace=False)]
-            feed_dict = {self.x_tf: x[batch_ids], self.y_tf: y[batch_ids],
-                self.keep_prob: dropout_keep_prob, self.lr_tf: lr}
+            feed_dict = {self.x_tf: x[batch_ids],
+                         self.y_tf: y[batch_ids],
+                         self.keep_prob: dropout_keep_prob,
+                         self.lr_tf: lr}
             if not self.zeronans:
                 W_nograd = compute_nograd(nans[batch_ids], self.arch[0])
                 feed_dict[self.W_nograd_tf] = W_nograd
