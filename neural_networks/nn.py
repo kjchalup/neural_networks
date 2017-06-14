@@ -57,7 +57,7 @@ class NN(object):
             will be ignored using a W_nograd matrix -- see fit().
         x_tf (tf.placeholder): If given, use as graph input.
     """
-    def __init__(self, x_dim, y_dim, arch=[1024],
+    def __init__(self, x_dim, y_dim, arch=[32]*10,
         ntype='plain', zeronans=True, x_tf=None, dropout_tf=None, **kwargs):
         # Bookkeeping.
         self.y_dim = y_dim
@@ -164,7 +164,6 @@ class NN(object):
 
     def define_loss(self):
         loss = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
-        tf.summary.scalar('loss', loss)
         return loss
 
     def define_training(self):
@@ -219,6 +218,9 @@ class NN(object):
             tr_losses (num_epochs,): Training errors (zero-padded).
             val_losses (num_epochs,): Validation errors (zero-padded).
         """
+        tr_summary = tf.summary.scalar("training_loss", self.loss_tf)
+        val_summary = tf.summary.scalar("validation_loss", self.loss_tf)
+
         # Split data into a training and validation set.
         n_samples = x.shape[0]
         if not 0 <= valsize < 1:
@@ -262,24 +264,29 @@ class NN(object):
             if not self.zeronans:
                 W_nograd = compute_nograd(nans[batch_ids], self.arch[0])
                 feed_dict[self.W_nograd_tf] = W_nograd
+
             if summary is None:
                 _, tr_loss = sess.run(
                     [self.train_op_tf, self.loss_tf],
                     feed_dict)
             else:
-                _, tr_loss, s = sess.run(
-                    [self.train_op_tf, self.loss_tf, summary],
+                _, tr_loss, s, trs = sess.run(
+                    [self.train_op_tf, self.loss_tf, summary, tr_summary],
                     feed_dict)
+
             if n_val > 0:
                 feed_dict[self.x_tf] = x[ids_perm[:n_val]]
                 feed_dict[self.y_tf] = y[ids_perm[:n_val]]
-                val_loss = sess.run(self.loss_tf, feed_dict)
+                val_loss, vals = sess.run([self.loss_tf, val_summary],
+                                          feed_dict)
             else:
                 val_loss = tr_loss
 
             if writer is not None:
                 # Add summaries for Tensorboard.
                 writer.add_summary(s, epoch_id)
+                writer.add_summary(trs, epoch_id)
+                writer.add_summary(vals, epoch_id)
 
             # Store losses.
             tr_losses[epoch_id] = tr_loss
@@ -320,7 +327,7 @@ if __name__ == "__main__":
     x[perm_ids[:int(n_samples/10)]] = np.nan
 
     # Create the neural net.
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[32]*10, ntype='plain')
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1])
 
     # Create a tensorflow session and run the net inside.
     with tf.Session() as sess:

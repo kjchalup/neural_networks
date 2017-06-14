@@ -120,7 +120,7 @@ class Autoencoder(object):
 
         # Inference.
         self.encode_tf, self.decode_tf, self.predict_tf, self.enc_tf =\
-                define_ae(self.x_tf, self.arch)
+                self.define_ae(self.x_tf, self.arch)
 
         # Loss.
         self.loss_tf = tf.losses.mean_squared_error(
