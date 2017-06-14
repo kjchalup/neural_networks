@@ -336,7 +336,7 @@ if __name__ == "__main__":
 
         # Use a writer object for Tensorboard visualization.
         summary = tf.summary.merge_all()
-        writer = tf.summary.FileWriter('logs/{}'.format('plain'))
+        writer = tf.summary.FileWriter('logs/plain')
         writer.add_graph(sess.graph)
 
         # Fit the net.

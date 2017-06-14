@@ -46,7 +46,7 @@ For example, `nn.py`_ contains the following section:
     x[perm_ids[:int(n_samples/10)]] = np.nan
 
     # Create the neural net.
-    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1], arch=[32]*10, ntype='plain')
+    nn = NN(x_dim=x.shape[1], y_dim=y.shape[1])
 
     # Create a tensorflow session and run the net inside.
     with tf.Session() as sess:
@@ -55,7 +55,7 @@ For example, `nn.py`_ contains the following section:
 
         # Use a writer object for Tensorboard visualization.
         summary = tf.summary.merge_all()
-        writer = tf.summary.FileWriter('logs/{}'.format('plain'))
+        writer = tf.summary.FileWriter('logs/')
         writer.add_graph(sess.graph)
 
         # Fit the net.
@@ -74,7 +74,25 @@ For example, `nn.py`_ contains the following section:
     plt.legend(loc=0)
     plt.show()
 
-This trains a neural net with 
+This trains a neural net with the default settings. The output should look
+something like this:
+    .. image:: https://github.com/kjchalup/neural_networks/example_output.png
+        :alt: Example NN training output.
+        :width: 100%
+        :align: center
+The code above also saves training info into the logs/ directory. You can
+then use `Tensorboard`_ to visualize the network graph and training stats.
+In this case, the default network has ten layers with 32 units each, as shown
+in the graph:
+    .. image:: https://github.com/kjchalup/neural_networks/example_graph.png
+        :alt: Example NN graph.
+        :width: 100%
+        :align: center
+Finally, the training and validation loss progress looked like this:
+    .. image:: https://github.com/kjchalup/neural_networks/example_training.png
+        :alt: Example NN training.
+        :width: 100%
+        :align: center
 
 Implemented Methods
 -------------------
