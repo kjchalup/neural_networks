@@ -1,7 +1,6 @@
 """ Neural network routines. """
 import sys
 import time
-from typing import List
 from tempfile import NamedTemporaryFile
 
 import numpy as np
@@ -83,11 +82,10 @@ class NN(object):
 
         # Define the saver object for model persistence.
         self.tmpfile = NamedTemporaryFile()
-        self.saver = tf.train.Saver(max_to_keep=1)
+        self.saver = tf.train.Saver(max_to_keep=2)
 
         # Define the data scaler.
         self.scaler_x, self.scaler_y = self.define_scalers()
-
 
     def define_nn(self):
         """ Define a Neural Network.
