@@ -5,18 +5,21 @@ Neural nets in `TensorFlow`_.
     :target: http://www.gnu.org/licenses/gpl-3.0
     :alt: GPL 3.0 License
 
-`TensorFlow`_ is a rather low-level framework for building and executing
-computational graphs, not strictly for neural networks. There are now numerous
+`TensorFlow`_ is a low-level framework for building and executing
+computational graphs. There are now numerous
 higher-level frameworks built on top of `TensorFlow`_ that implement neural
 networks (e.g. `Keras`_, now officially supported by `TensorFlow`_).
 
-This repository implements such a high-level framework for my own research
-purposes. In research, I need low-level control over the computational graph,
-but I also find I often re-use basic neural net architectures.
+This repository implements one such high-level framework.
+In research, I need low-level control over the computational graph,
+but I also find I often re-use basic neural net architectures. This makes it
+inconvenient to use pre-existing frameworks (lack of low-level control) --
+but I don't want to re-implement basic nn components each time.
 
-I can see two main reasons why anyone would use this repository:
-    * You are me, as I put exactly what I need in here.
-    * There are cutting-edge neural net types not implemented elsewhere, but found here (e.g. highway nets, GANs etc).
+Why would anyone use this repository?
+
+    * You are me, and use it for doing research.
+    * You want a unified access to high-level nn implementations that are not easily found elsewhere (e.g. highway nets, GANs etc).
 
 Usage
 -----
@@ -74,24 +77,24 @@ For example, `nn.py`_ contains the following section:
     plt.show()
 
 This trains a neural net with the default settings. The output should look something like this:
+
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/example_output.png
         :alt: Example NN training output.
-        :scale: 50%
         :align: center
         
 The code above also saves training info into the logs/ directory. You can
 then use `Tensorboard`_ to visualize the network graph and training stats.
 In this case, the default network has ten layers with 32 units each, as shown
 in the graph:
+
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/example_graph.png
         :alt: Example NN graph.
-        :scale: 50%
         :align: center
         
 Finally, the training and validation loss progress looked like this:
+
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/example_training.png
         :alt: Example NN training.
-        :width: 100%
         :align: center
 
 Implemented Methods
@@ -99,19 +102,25 @@ Implemented Methods
 At the moment, the reposity contains the following methods:
   
   * `nn.py`_: Multi-layer perceptron (MLP) with Dropout (`arXiv:1207.0580`_).
-  * `mdn.py`_: Mixture-Density Network (`MDN`_)
+  * `nn.py`_: Residual Network (`arXiv:1512.03385`_).
+  * `nn.py`_: Highway Network (`arXiv:1505.00387`_).
+  * `gan.py`_: Least-Squares Generative Adversarial Network (`arXiv:1611.04076v2`_, in my experience the best GAN, though doesn't a convergence criterion like Wasserstein GANs).
+  * `mtn.py`_: Multi-Task Networks (my own creation) -- learn from multiple datasets with related inputs but different output tasks.
 
 Requirements
 ------------
-To use the nn methods:
+Everything should work with Python 2 and 3.
+
     * `NumPy`_ >= 1.12
     * `TensorFlow`_ >= 1.0.0
-    * `scikit-learn`_ >= 0.18.1
    
 .. _numpy: http://www.numpy.org/
 .. _scikit-learn: http://scikit-learn.org/
 .. _TensorFlow: https://www.tensorflow.org/
 .. _nn.py: nn.py
-.. _mdn.py: nn.py
+.. _mtn.py: mtn.py
+.. _gan.py: gan.py
 .. _arXiv:1207.0580: https://arxiv.org/pdf/1207.0580.pdf)
-.. _MDN: https://publications.aston.ac.uk/373/1/NCRG_94_004.pdf
+.. _arXiv:1512.03385: https://arxiv.org/pdf/1512.03385.pdf
+.. _arXiv:1505.00387: https://arxiv.org/pdf/1505.00387.pdf
+.. _arXiv:1611.04076v2: https://arxiv.org/abs/1611.04076v2
