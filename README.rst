@@ -1,12 +1,11 @@
+Neural nets in `TensorFlow`_.
+##############################
+
 .. image:: https://img.shields.io/badge/License-GPL%20v3-blue.svg
     :target: http://www.gnu.org/licenses/gpl-3.0
     :alt: GPL 3.0 License
 
-* Various flavors of neural networks implemented in `TensorFlow`_.*
-
-Motivation
-----------
-Core `TensorFlow`_ is a rather low-level framework for building and executing
+`TensorFlow`_ is a rather low-level framework for building and executing
 computational graphs, not strictly for neural networks. There are now numerous
 higher-level frameworks built on top of `TensorFlow`_ that implement neural
 networks (e.g. `Keras`_, now officially supported by `TensorFlow`_).
@@ -16,9 +15,8 @@ purposes. In research, I need low-level control over the computational graph,
 but I also find I often re-use basic neural net architectures.
 
 I can see two main reasons why anyone would use this repository:
-    1) You are me, as I put exactly what I need in here.
-    2) There are cutting-edge neural net types not implemented
-        elsewhere, but found here (e.g. highway nets, GANs etc).
+    * You are me, as I put exactly what I need in here.
+    * There are cutting-edge neural net types not implemented elsewhere, but found here (e.g. highway nets, GANs etc).
 
 Usage
 -----
@@ -31,7 +29,8 @@ See individual module documentation for more details.
 Each module's usage is exemplified in its __main__ part.
 For example, `nn.py`_ contains the following section:
 
-.. code:: python 
+.. code-block:: python
+
     import numpy as np
     from matplotlib import pyplot as plt
     n_samples = 1000
@@ -74,22 +73,23 @@ For example, `nn.py`_ contains the following section:
     plt.legend(loc=0)
     plt.show()
 
-This trains a neural net with the default settings. The output should look
-something like this:
-    .. image:: https://github.com/kjchalup/neural_networks/example_output.png
+This trains a neural net with the default settings. The output should look something like this:
+    .. image:: https://github.com/kjchalup/neural_networks/blob/master/example_output.png
         :alt: Example NN training output.
-        :width: 100%
+        :scale: 50%
         :align: center
+        
 The code above also saves training info into the logs/ directory. You can
 then use `Tensorboard`_ to visualize the network graph and training stats.
 In this case, the default network has ten layers with 32 units each, as shown
 in the graph:
-    .. image:: https://github.com/kjchalup/neural_networks/example_graph.png
+    .. image:: https://github.com/kjchalup/neural_networks/blob/master/example_graph.png
         :alt: Example NN graph.
-        :width: 100%
+        :scale: 50%
         :align: center
+        
 Finally, the training and validation loss progress looked like this:
-    .. image:: https://github.com/kjchalup/neural_networks/example_training.png
+    .. image:: https://github.com/kjchalup/neural_networks/blob/master/example_training.png
         :alt: Example NN training.
         :width: 100%
         :align: center
