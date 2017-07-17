@@ -22,7 +22,8 @@ class SkeletonNN(nn.NN):
     __doc__ += nn.NN.__doc__
 
     def __init__(self, x_tf, dropout_tf, **kwargs):
-       super().__init__(x_tf=x_tf, dropout_tf=dropout_tf,**kwargs)
+       #super().__init__(x_tf=x_tf, dropout_tf=dropout_tf,**kwargs)
+       nn.NN.__init__(self, x_tf=x_tf, dropout_tf=dropout_tf, **kwargs)
 
     def define_loss(self):
         return None
@@ -68,9 +69,9 @@ class CGAN(object):
             tf.float32, name='learning_rate')
         self.dropout_tf = tf.placeholder(
             tf.float32, name='dropout')
-        self.g_arch = g_arch + [x_dim]
+        self.g_arch = g_arch
         self.g_ntype = g_ntype
-        self.d_arch = d_arch + [1]
+        self.d_arch = d_arch
         self.d_ntype = d_ntype
         
         # Define the Generator, Discriminator, and their losses.
@@ -84,11 +85,12 @@ class CGAN(object):
             self.d_train_tf = self.define_dtrain()
 
         # Define the data scalers.
-        self.scaler_x = self.define_scalers()
+        self.scaler_x, self.scaler_cond = self.define_scalers()
 
     def define_scalers(self):
         """ Use the MinMax scaler, as generator will have tanh outputs. """
-        return MinMaxScaler(feature_range=(-1, 1))
+        return (MinMaxScaler(feature_range=(-1, 1)),
+             MinMaxScaler(feature_range=(-1, 1)))
 
     def define_gan(self):
         with tf.variable_scope('generator'):
@@ -134,6 +136,8 @@ class CGAN(object):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
         x = self.scaler_x.fit_transform(x)
+        cond = self.scaler_cond.fit_transform(cond)
+
         for epoch in range(epochs):
             # Train the discriminator.
             for k in range(n_diters):
@@ -164,17 +168,19 @@ class CGAN(object):
                                   epoch, int(tr_time), dloss, gloss))
                 sys.stdout.flush()
 
-    def sample(self, n_samples, cond):
+    def sample(self, n_samples, cond, sess):
         """ Sample from the distribution defined by the generator.
 
         Args:
             n_samples (int): Number of samples to create *per each cond data*.
             cond (n_data, cond_dim): Conditioning data.
+            sess: Tensorflow session.
 
         Returns:
             samples (n_data, n_samples, x_dim): Samples defined by the
                 generator's distribution.
         """
+        cond = self.scaler_cond.transform(cond)
         res = np.zeros((cond.shape[0], n_samples, self.x_dim))
         for cond_id, cond_data in enumerate(cond):
             z_noise = self.sample_noise(n_samples)
@@ -235,7 +241,7 @@ if __name__=="__main__":
         cgan.fit(x=x, cond=cond, sess=sess, nn_verbose=True, **kwargs)
 
         # Generate some samples.
-        samples = cgan.sample(n_samples=1, cond=cond)
+        samples = cgan.sample(n_samples=1, cond=cond, sess=sess)
 
     plt.figure(figsize=(20, 10))
     plt.subplot(1, 2, 1)

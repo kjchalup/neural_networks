@@ -20,7 +20,7 @@ def compute_nograd(nans, n_out):
 def fully_connected(
     invar, n_out, activation_fn=tf.identity, W_nograd=None,
     weights_initializer=tf.contrib.layers.xavier_initializer(),
-    biases_initializer=tf.constant_initializer(.1), name='fc'):
+    biases_initializer=tf.constant_initializer(.1), name='fc', **kwargs):
     """ A fully-connected layer. Use this instead of tf.contrib.layers
     to retain fine control over summaries. """
     with tf.variable_scope(name):
@@ -81,7 +81,7 @@ class NN(object):
                 tf.float32, [x_dim, arch[0]], name='W_nograd')
 
         # Inference.
-        self.y_pred = self.define_nn()
+        self.y_pred = self.define_nn(**kwargs)
 
         # Loss.
         with tf.name_scope('loss'):
@@ -97,7 +97,7 @@ class NN(object):
         # Define the data scaler.
         self.scaler_x, self.scaler_y = self.define_scalers()
 
-    def define_nn(self):
+    def define_nn(self, **kwargs):
         """ Define a Neural Network.
 
         The architecture of the network is deifned by the Ws, list of weight
@@ -121,7 +121,7 @@ class NN(object):
             # Reshape the input accordingly.
             with tf.variable_scope('layerreshape'):
                 y_pred = fully_connected(
-                    y_pred, self.arch[0], W_nograd=W_nograd)
+                    y_pred, self.arch[0], W_nograd=W_nograd, **kwargs)
                 y_pred = tf.nn.dropout(y_pred, keep_prob=self.keep_prob)
 
         for layer_id in range(len(self.arch)):
