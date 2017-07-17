@@ -76,12 +76,14 @@ class FCNN(object):
                 y_pred = tf.layers.conv2d(
                     y_pred, filters=self.n_filters[layer_id], kernel_size=3,
                     padding='same', activation=tf.nn.elu)
+                tf.summary.histogram('feature_map', y_pred)
     
         # The final layer polls depth channels with 1x1 convolutions.
-        with tf.name_scope('layerout'):
+        with tf.name_scope('1x1conv'):
             y_pred = tf.layers.conv2d(
                 y_pred, filters=self.x_shape[2], kernel_size=1, padding='same',
                 activation=None)
+            tf.summary.histogram('feature_map', y_pred)
 
         return y_pred
 
@@ -253,7 +255,8 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(X_tr, Y_tr, sess)
+        import pdb; pdb.set_trace()
+        fcnn.fit(X_tr, Y_tr, sess, writer=writer, summary=summary)
 
         # Predict.
         Y_pred = fcnn.predict(X_ts, sess).reshape(-1, 28, 28)
