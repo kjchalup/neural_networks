@@ -19,7 +19,8 @@ but I don't want to re-implement basic nn components each time.
 Why would anyone use this repository?
 
     * You are me, and use it for doing research.
-    * You want a unified access to high-level nn implementations that are not easily found elsewhere (e.g. highway nets, GANs etc).
+    * You are a Tensorflow beginner, and want to see how to implement stuff. I certainly learned a lot looking at other people's repositories!
+    * If you want to use my implementations in your own projects please do, though you'll probably learn more and get best results if you re-implement it yourself.
 
 Usage
 -----
