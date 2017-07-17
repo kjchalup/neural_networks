@@ -19,7 +19,8 @@ but I don't want to re-implement basic nn components each time.
 Why would anyone use this repository?
 
     * You are me, and use it for doing research.
-    * You want a unified access to high-level nn implementations that are not easily found elsewhere (e.g. highway nets, GANs etc).
+    * You are a Tensorflow beginner, and want to see how to implement stuff. I certainly learned a lot looking at other people's repositories!
+    * If you want to use my implementations in your own projects please do, though you'll probably learn more and get best results if you re-implement it yourself.
 
 Usage
 -----
@@ -35,17 +36,12 @@ Neural Network (FCNN) to denoise MNIST images:
 
 .. code-block:: python
 
-if __name__ == "__main__":
-    """ Check that the network works as expected. Denoise MNIST. 
-    Takes about a minute on a Titan X GPU.
-    """
-    import matplotlib.pyplot as plt
-    from tensorflow.examples.tutorials.mnist import input_data
+    [...] # Code that defines the FCNN.
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     ims_tr = mnist.train.images.reshape(-1, 28, 28, 1)
     ims_ts = mnist.test.images.reshape(-1, 28, 28, 1)
 
-    # Create a dataset of MNIST with random Gaussian noise as inputs
+    # Create a dataset of MNIST with added Gaussian noise as inputs
     # and the original digits as outputs.
     X_tr = ims_tr + np.random.randn(*ims_tr.shape) * .1
     Y_tr = ims_tr
@@ -66,7 +62,6 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        import pdb; pdb.set_trace()
         fcnn.fit(X_tr, Y_tr, sess, writer=writer, summary=summary)
 
         # Predict.
@@ -101,7 +96,7 @@ At the moment, the reposity contains the following methods:
   * `gan.py`_: Least-Squares Generative Adversarial Network (`arXiv:1611.04076v2`_, in my experience the best GAN, though doesn't a convergence criterion like Wasserstein GANs).  
   * `cgan.py`_: Conditional Least-Squares Generative Adversarial Network (`arXiv:1411.1784`_)
   * `mtn.py`_: Multi-Task Networks (my own creation) -- learn from multiple datasets with related inputs but different output tasks.
-  * `fcnn.py`: Fully-convolutional neural nets.
+  * `fcnn.py`_: Fully-convolutional neural nets.
 
 Requirements
 ------------
@@ -113,9 +108,13 @@ Everything should work with Python 2 and 3.
 .. _numpy: http://www.numpy.org/
 .. _scikit-learn: http://scikit-learn.org/
 .. _TensorFlow: https://www.tensorflow.org/
-.. _nn.py: nn.py
-.. _mtn.py: mtn.py
-.. _gan.py: gan.py
+.. _TensorBoard: https://www.youtube.com/watch?v=eBbEDRsCmv4
+.. _Keras: https://keras.io/
+.. _nn.py: neural_networks/nn.py
+.. _mtn.py: neural_networks/mtn.py
+.. _gan.py: neural_networks/gan.py
+.. _cgan.py: neural_networks/cgan.py
+.. _fcnn.py: neural_networks/fcnn.py
 .. _arXiv:1207.0580: https://arxiv.org/pdf/1207.0580.pdf)
 .. _arXiv:1512.03385: https://arxiv.org/pdf/1512.03385.pdf
 .. _arXiv:1505.00387: https://arxiv.org/pdf/1505.00387.pdf
