@@ -97,7 +97,7 @@ At the moment, the reposity contains the following methods:
   * `gan.py`_: Least-Squares Generative Adversarial Network (`arXiv:1611.04076v2`_, in my experience the best GAN, though doesn't a convergence criterion like Wasserstein GANs).  
   * `cgan.py`_: Conditional Least-Squares Generative Adversarial Network (`arXiv:1411.1784`_)
   * `mtn.py`_: Multi-Task Networks (my own creation) -- learn from multiple datasets with related inputs but different output tasks.
-  * `fcnn.py`: Fully-convolutional neural nets.
+  * `fcnn.py`_: Fully-convolutional neural nets.
 
 Requirements
 ------------
@@ -109,12 +109,13 @@ Everything should work with Python 2 and 3.
 .. _numpy: http://www.numpy.org/
 .. _scikit-learn: http://scikit-learn.org/
 .. _TensorFlow: https://www.tensorflow.org/
+.. _TensorBoard: https://www.youtube.com/watch?v=eBbEDRsCmv4
 .. _Keras: https://keras.io/
-.. _nn.py: nn.py
-.. _mtn.py: mtn.py
-.. _gan.py: gan.py
-.. _cgan.py: cgan.py
-.. _fcnn.py: fcnn.py
+.. _nn.py: neural_networks/nn.py
+.. _mtn.py: neural_networks/mtn.py
+.. _gan.py: neural_networks/gan.py
+.. _cgan.py: neural_networks/cgan.py
+.. _fcnn.py: neural_networks/fcnn.py
 .. _arXiv:1207.0580: https://arxiv.org/pdf/1207.0580.pdf)
 .. _arXiv:1512.03385: https://arxiv.org/pdf/1512.03385.pdf
 .. _arXiv:1505.00387: https://arxiv.org/pdf/1505.00387.pdf
