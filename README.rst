@@ -35,16 +35,12 @@ Neural Network (FCNN) to denoise MNIST images:
 
 .. code-block:: python
 
-    """ Check that the network works as expected. Denoise MNIST. 
-    Takes about a minute on a Titan X GPU.
-    """
-    import matplotlib.pyplot as plt
-    from tensorflow.examples.tutorials.mnist import input_data
+    [...] # Code that defines the FCNN.
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
     ims_tr = mnist.train.images.reshape(-1, 28, 28, 1)
     ims_ts = mnist.test.images.reshape(-1, 28, 28, 1)
 
-    # Create a dataset of MNIST with random Gaussian noise as inputs
+    # Create a dataset of MNIST with added Gaussian noise as inputs
     # and the original digits as outputs.
     X_tr = ims_tr + np.random.randn(*ims_tr.shape) * .1
     Y_tr = ims_tr
