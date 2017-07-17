@@ -62,7 +62,6 @@ Neural Network (FCNN) to denoise MNIST images:
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        import pdb; pdb.set_trace()
         fcnn.fit(X_tr, Y_tr, sess, writer=writer, summary=summary)
 
         # Predict.
