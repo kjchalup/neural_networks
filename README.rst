@@ -109,9 +109,12 @@ Everything should work with Python 2 and 3.
 .. _numpy: http://www.numpy.org/
 .. _scikit-learn: http://scikit-learn.org/
 .. _TensorFlow: https://www.tensorflow.org/
+.. _Keras: https://keras.io/
 .. _nn.py: nn.py
 .. _mtn.py: mtn.py
 .. _gan.py: gan.py
+.. _cgan.py: cgan.py
+.. _fcnn.py: fcnn.py
 .. _arXiv:1207.0580: https://arxiv.org/pdf/1207.0580.pdf)
 .. _arXiv:1512.03385: https://arxiv.org/pdf/1512.03385.pdf
 .. _arXiv:1505.00387: https://arxiv.org/pdf/1505.00387.pdf
