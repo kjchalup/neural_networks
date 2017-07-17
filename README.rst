@@ -35,7 +35,6 @@ Neural Network (FCNN) to denoise MNIST images:
 
 .. code-block:: python
 
-if __name__ == "__main__":
     """ Check that the network works as expected. Denoise MNIST. 
     Takes about a minute on a Titan X GPU.
     """
