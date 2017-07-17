@@ -1,5 +1,6 @@
 """ Various data normalizers. Mostly useful
 to handle NaN values better than sklearn. """
+from sklearn.preprocessing import MinMaxScaler as SLMinMaxScaler
 import numpy as np
 
 class StandardScaler(object):
@@ -49,3 +50,25 @@ class HalfScaler(object):
         ytr = self.scaler.inverse_transform(y[:, self.ignore_dim:])
         return np.hstack([y[:, self.ignore_dim], ytr])
 
+class MinMaxScaler(object):
+    """
+    Like sklearn's MinMaxScaler, but applies to multi-dimensional arrays.
+    """
+    def __init__(self, feature_range):
+        self.feature_range=feature_range
+
+    def fit(self, x):
+        self.scaler = SLMinMaxScaler(feature_range=self.feature_range)
+        self.scaler.fit(x.reshape(-1, 1))
+
+    def transform(self, x):
+        shape = x.shape
+        return self.scaler.transform(x.reshape(-1, 1)).reshape(shape)
+
+    def fit_transform(self, x):
+        self.fit(x)
+        return self.transform(x)
+
+    def inverse_transform(self, y):
+        shape = y.shape
+        return self.scaler.inverse_transform(y.reshape(-1, 1)).reshape(shape)

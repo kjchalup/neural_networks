@@ -28,16 +28,18 @@ class FCNN(object):
         n_filters: An integer array of shape (n_layers,). Number of filters
             in each layer.
         x_tf (tf.placeholder): If given, use as graph input.
+        reuse (bool): Whether to reuse the net weights.
 
     TODO: This first version has no residual connections!
     """
     def __init__(self, x_shape, n_layers=3, n_filters=np.array([4] * 3),
-        x_tf=None, **kwargs):
+        x_tf=None, reuse=False, **kwargs):
+        if n_layers != len(n_filters):
+            raise ValueError('Number of layers must equal len(n_filters)')
         self.x_shape = x_shape
         self.n_layers = n_layers
         self.n_filters = n_filters
-        if n_layers != len(n_filters):
-            raise ValueError('Number of layers must equal len(n_filters)')
+        self.reuse = reuse
 
         # Set up the placeholders.
         if x_tf is None:
@@ -72,17 +74,17 @@ class FCNN(object):
 
         # Create the hidden layers.
         for layer_id in range(self.n_layers):
-            with tf.name_scope('layer{}'.format(layer_id)):
+            with tf.variable_scope('layer{}'.format(layer_id)):
                 y_pred = tf.layers.conv2d(
                     y_pred, filters=self.n_filters[layer_id], kernel_size=3,
-                    padding='same', activation=tf.nn.elu)
+                    padding='same', activation=tf.nn.elu, reuse=self.reuse)
                 tf.summary.histogram('feature_map', y_pred)
     
         # The final layer polls depth channels with 1x1 convolutions.
-        with tf.name_scope('1x1conv'):
+        with tf.variable_scope('1x1conv'):
             y_pred = tf.layers.conv2d(
                 y_pred, filters=self.x_shape[2], kernel_size=1, padding='same',
-                activation=None)
+                activation=None, reuse=self.reuse)
             tf.summary.histogram('feature_map', y_pred)
 
         return y_pred
@@ -255,7 +257,6 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        import pdb; pdb.set_trace()
         fcnn.fit(X_tr, Y_tr, sess, writer=writer, summary=summary)
 
         # Predict.
