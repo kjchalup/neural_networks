@@ -81,18 +81,20 @@ class GAN_FCNN(object):
     def define_gan(self):
         with tf.variable_scope('generator'):
             gen_net = SkeletonFCNN(
-                x_shape=self.x_shape, x_tf=self.z_tf)
+                x_shape=self.x_shape, x_tf=self.z_tf, n_layers=4,
+                n_filters=np.array([32] * 4))
             x_from_z = tf.nn.tanh(gen_net.y_pred)
 
         with tf.variable_scope('discriminator') as scope:
             # Transform the (h x w x c) feature map to a scalar by avg pooling.
-            disc_net = SkeletonFCNN(x_shape=self.x_shape, x_tf=self.x_tf)
+            disc_net = SkeletonFCNN(x_shape=self.x_shape, x_tf=self.x_tf,
+                n_layers=6, n_filters=np.array([32] * 6))
             y_from_x = tf.reduce_mean(disc_net.y_pred, axis=[1, 2, 3])
             y_from_x = tf.reshape(y_from_x, [-1, 1])
             scope.reuse_variables()
 
             y_from_z = SkeletonFCNN(x_shape=self.x_shape, x_tf=x_from_z,
-                reuse=True).y_pred
+                n_layers=6, n_filters=np.array([32] * 6), reuse=True).y_pred
             y_from_z = tf.reduce_mean(y_from_z, axis=[1, 2, 3])
             y_from_z = tf.reshape(y_from_z, [-1, 1])
 
@@ -118,7 +120,7 @@ class GAN_FCNN(object):
             self.d_loss_tf,  var_list=var_list)
 
     def fit(self, x, sess, epochs=1000, batch_size=32, lr=1e-3,
-            n_diters=30, nn_verbose=True, **kwargs):
+            n_diters=100, nn_verbose=True, **kwargs):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
         x = self.scaler_x.fit_transform(x)
@@ -219,4 +221,5 @@ if __name__=="__main__":
         plt.axis('off')
         plt.imshow(X_samples[im_id].reshape(28, 28),
             cmap='Greys', interpolation='nearest')
+    plt.savefig('gan_fcnn.png')
     plt.show()

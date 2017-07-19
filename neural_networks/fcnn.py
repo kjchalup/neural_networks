@@ -12,6 +12,50 @@ import tensorflow as tf
 
 from neural_networks import scalers
 
+def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
+    residual=False, reuse=False):
+    """ A convolutional resnet building block.
+    
+    Pushes in_tf through batch_norm, relu, and convolution.
+    If residual = True, make two bn_relu_conv layers and add
+    a skip connection. All convolutional filters are 3x3.
+
+    Args:
+        in_tf: Input tensor.
+        is_training_tf: bool tensor, indicates whether we're in the training
+            phase or not (used by batch_norm and dropout).
+        n_filters (int): Number of 3x3 convolution filters.
+        residual (bool): Whether to make the layer residual.
+        reuse (bool): Whether to reuse Tensorflow variables.
+
+    Returns:
+        out_tf: Output tensor.
+    """
+
+    # Apply batch normalization.
+    out_tf = tf.layers.batch_normalization(
+        in_tf, center=True, scale=True, training=is_training_tf)
+
+    # Apply the nonlinearity.
+    out_tf = tf.nn.elu(out_tf)
+
+    # Apply convolutions.
+    out_tf = tf.layers.conv2d(
+        out_tf, filters=n_filters, kernel_size=3,
+        padding='same', activation=None, reuse=reuse, name='conv1')
+
+    if residual:
+        out_tf = tf.layers.batch_normalization(
+            out_tf, center=True, scale=True, training=is_training_tf)
+        out_tf = tf.nn.elu(out_tf)
+        out_tf = tf.layers.conv2d(
+            out_tf, filters=n_filters, kernel_size=3,
+            padding='same', activation=None, reuse=reuse, name='conv2')
+        out_tf += in_tf
+    tf.summary.histogram('ftr_map', out_tf)
+
+    return out_tf
+
 
 class FCNN(object):
     """ A Fully Convolutional Neural Net with residual connections.
@@ -29,27 +73,34 @@ class FCNN(object):
             in each layer.
         x_tf (tf.placeholder): If given, use as graph input.
         reuse (bool): Whether to reuse the net weights.
+        bn (bool): Whether to use batch normalization.
+        res (bool): Whether to add residual connections.
 
     TODO: This first version has no residual connections!
     """
-    def __init__(self, x_shape, n_layers=3, n_filters=np.array([4] * 3),
-        x_tf=None, reuse=False, **kwargs):
+    def __init__(self, x_shape, n_layers=4, n_filters=None,
+        x_tf=None, reuse=False, bn=True, res=True, **kwargs):
+        if n_filters is None:
+            n_filters = np.array([64] * n_layers)
         if n_layers != len(n_filters):
             raise ValueError('Number of layers must equal len(n_filters)')
         self.x_shape = x_shape
         self.n_layers = n_layers
         self.n_filters = n_filters
         self.reuse = reuse
+        self.bn = bn
+        self.res = res
 
         # Set up the placeholders.
         if x_tf is None:
-            self.x_tf = tf.placeholder(
-                tf.float32, [None, x_shape[0], x_shape[1], x_shape[2]], name='input')
+            self.x_tf = tf.placeholder(tf.float32,
+                [None, x_shape[0], x_shape[1], x_shape[2]], name='input')
         else:
             self.x_tf = x_tf
-        self.y_tf = tf.placeholder(
-            tf.float32, [None, x_shape[0], x_shape[1], x_shape[2]], name='output')
+        self.y_tf = tf.placeholder(tf.float32,
+            [None, x_shape[0], x_shape[1], x_shape[2]], name='output')
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
+        self.is_training = tf.placeholder(tf.bool, name='train_flag')
 
         # Inference.
         self.y_pred = self.define_fcnn(**kwargs)
@@ -75,17 +126,14 @@ class FCNN(object):
         # Create the hidden layers.
         for layer_id in range(self.n_layers):
             with tf.variable_scope('layer{}'.format(layer_id)):
-                y_pred = tf.layers.conv2d(
-                    y_pred, filters=self.n_filters[layer_id], kernel_size=3,
-                    padding='same', activation=tf.nn.elu, reuse=self.reuse)
-                tf.summary.histogram('feature_map', y_pred)
-    
+                y_pred = bn_relu_conv(y_pred, self.is_training,
+                    self.n_filters[layer_id], self.res, self.reuse)
+                
         # The final layer polls depth channels with 1x1 convolutions.
         with tf.variable_scope('1x1conv'):
             y_pred = tf.layers.conv2d(
                 y_pred, filters=self.x_shape[2], kernel_size=1, padding='same',
                 activation=None, reuse=self.reuse)
-            tf.summary.histogram('feature_map', y_pred)
 
         return y_pred
 
@@ -94,7 +142,11 @@ class FCNN(object):
         return loss
 
     def define_training(self):
-        return tf.train.AdamOptimizer(self.lr_tf).minimize(self.loss_tf)
+        # Make sure to include batch_norm dependencies during training.
+        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+        with tf.control_dependencies(update_ops):
+            train_op = tf.train.AdamOptimizer(self.lr_tf).minimize(self.loss_tf)
+        return train_op
 
     def define_scalers(self):
         return scalers.StandardScaler(), scalers.StandardScaler()
@@ -112,11 +164,11 @@ class FCNN(object):
         nans = np.isnan(x)
         x = self.scaler_x.transform(x)
         x[np.isnan(x)] = 0
-        feed_dict = {self.x_tf: x}
+        feed_dict = {self.x_tf: x, self.is_training: False}
         y_pred = sess.run(self.y_pred, feed_dict)
         return self.scaler_y.inverse_transform(y_pred)
 
-    def fit(self, x, y, sess, epochs=1000, batch_size=32,
+    def fit(self, x, y, sess, epochs=1000, batch_size=128,
             lr=1e-3, valsize=.1, nn_verbose=True,
             writer=None, summary=None, **kwargs):
         """ Train the MDN to maximize the data likelihood.
@@ -178,6 +230,7 @@ class FCNN(object):
                 np.random.choice(n_samples-n_val, batch_size, replace=False)]
             feed_dict = {self.x_tf: x[batch_ids],
                          self.y_tf: y[batch_ids],
+                         self.is_training: True,
                          self.lr_tf: lr}
 
             if summary is None:
@@ -190,6 +243,7 @@ class FCNN(object):
                     feed_dict)
 
             if n_val > 0:
+                feed_dict[self.is_training] = False
                 feed_dict[self.x_tf] = x[ids_perm[:n_val]]
                 feed_dict[self.y_tf] = y[ids_perm[:n_val]]
                 val_loss, vals = sess.run([self.loss_tf, val_summary],
@@ -236,11 +290,11 @@ if __name__ == "__main__":
     ims_tr = mnist.train.images.reshape(-1, 28, 28, 1)
     ims_ts = mnist.test.images.reshape(-1, 28, 28, 1)
 
-    # Create a dataset of MNIST with random Gaussian noise as inputs
+    # Create a dataset of MNIST with random binary noise as inputs
     # and the original digits as outputs.
-    X_tr = ims_tr + np.random.randn(*ims_tr.shape) * .1
+    X_tr = ims_tr + np.abs(np.random.randn(*ims_tr.shape) * .1)
     Y_tr = ims_tr
-    X_ts = ims_ts + np.random.randn(*ims_ts.shape) * .1
+    X_ts = ims_ts + np.abs(np.random.randn(*ims_ts.shape) * .1)
     Y_ts = ims_ts
 
     # Define the graph.
@@ -257,7 +311,7 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(X_tr, Y_tr, sess, writer=writer, summary=summary)
+        fcnn.fit(X_tr, Y_tr, sess, epochs=100, writer=writer, summary=summary)
 
         # Predict.
         Y_pred = fcnn.predict(X_ts, sess).reshape(-1, 28, 28)
