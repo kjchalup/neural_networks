@@ -6,7 +6,6 @@ Krzysztof Chalupka, 2017.
 import sys
 import time
 from tempfile import NamedTemporaryFile
-
 import numpy as np
 import tensorflow as tf
 
@@ -116,9 +115,6 @@ class FCNN(object):
         self.tmpfile = NamedTemporaryFile()
         self.saver = tf.train.Saver(max_to_keep=2)
 
-        # Define the data scaler.
-        self.scaler_x, self.scaler_y = self.define_scalers()
-
     def define_fcnn(self, **kwargs):
         """ Define the FCNN. """
         y_pred = self.x_tf
@@ -148,9 +144,6 @@ class FCNN(object):
             train_op = tf.train.AdamOptimizer(self.lr_tf).minimize(self.loss_tf)
         return train_op
 
-    def define_scalers(self):
-        return scalers.StandardScaler(), scalers.StandardScaler()
-
     def predict(self, x, sess):
         """ Compute the output for given data.
 
@@ -161,22 +154,22 @@ class FCNN(object):
         Returns:
             y (n_samples, y_dim): Predicted outputs.
         """
-        nans = np.isnan(x)
-        x = self.scaler_x.transform(x)
-        x[np.isnan(x)] = 0
         feed_dict = {self.x_tf: x, self.is_training: False}
         y_pred = sess.run(self.y_pred, feed_dict)
-        return self.scaler_y.inverse_transform(y_pred)
+        return y_pred
 
-    def fit(self, x, y, sess, epochs=1000, batch_size=128,
+    def fit(self, sess, fetch_data, epochs=1000, batch_size=128,
             lr=1e-3, valsize=.1, nn_verbose=True,
             writer=None, summary=None, **kwargs):
         """ Train the MDN to maximize the data likelihood.
 
         Args:
-            x (n_samples, x_dim): Input data.
-            y (n_samples, y_dim): Output data.
             sess: Tensorflow session.
+            fetch_data: A method that takes an int argument batch_size 
+                and a string argument data_type. If data_type=='val', returns
+                a batch of validation data (or None if there's no validation
+                data available). If data_type=='train', returns a batch of
+                training data.
             epochs (int): How many batches to train for.
             batch_size (int): Training batch size.
             lr (float): Learning rate.
@@ -193,43 +186,16 @@ class FCNN(object):
         tr_summary = tf.summary.scalar("training_loss", self.loss_tf)
         val_summary = tf.summary.scalar("validation_loss", self.loss_tf)
 
-        # Split data into a training and validation set.
-        n_samples = x.shape[0]
-        if not 0 <= valsize < 1:
-            raise ValueError('Invalid validation dataset size')
-        n_val = int(n_samples * float(valsize))
-        if valsize > 0:
-            n_val = max(1, n_val)
-        nans = np.isnan(x)
-        ids_perm = np.random.permutation(n_samples)
-
-        # Copy the data into new arrays before normalization.
-        # TODO: This wastes memory: ideally user would normalize
-        # the data. Add a 'normalize' option instead?
-        x = np.array(x)
-        y = np.array(y)
-
-        # Choose training and validation data randomly.
-        x[ids_perm[n_val:]] = self.scaler_x.fit_transform(x[ids_perm[n_val:]])
-        y[ids_perm[n_val:]] = self.scaler_y.fit_transform(y[ids_perm[n_val:]])
-        if n_val > 0:
-            x[ids_perm[:n_val]] = self.scaler_x.transform(x[ids_perm[:n_val]])
-            y[ids_perm[:n_val]] = self.scaler_y.transform(y[ids_perm[:n_val]])
-        x[np.isnan(x)] = 0
-        y[np.isnan(y)] = 0
-
         # Train the neural net.
         tr_losses = np.zeros(epochs)
         val_losses = np.zeros(epochs)
         best_val = np.inf
         start_time = time.time()
-        batch_size = min(batch_size, n_samples-n_val)
 
         for epoch_id in range(epochs):
-            batch_ids = ids_perm[n_val +
-                np.random.choice(n_samples-n_val, batch_size, replace=False)]
-            feed_dict = {self.x_tf: x[batch_ids],
-                         self.y_tf: y[batch_ids],
+            x, y = fetch_data(batch_size, 'train')
+            feed_dict = {self.x_tf: x,
+                         self.y_tf: y,
                          self.is_training: True,
                          self.lr_tf: lr}
 
@@ -241,11 +207,13 @@ class FCNN(object):
                 _, tr_loss, s, trs = sess.run(
                     [self.train_op_tf, self.loss_tf, summary, tr_summary],
                     feed_dict)
-
-            if n_val > 0:
+            
+            val_data = fetch_data(batch_size, 'val')
+            if val_data is not None:
+                x, y = val_data
                 feed_dict[self.is_training] = False
-                feed_dict[self.x_tf] = x[ids_perm[:n_val]]
-                feed_dict[self.y_tf] = y[ids_perm[:n_val]]
+                feed_dict[self.x_tf] = x
+                feed_dict[self.y_tf] = y
                 val_loss, vals = sess.run([self.loss_tf, val_summary],
                                           feed_dict)
             else:
@@ -296,6 +264,15 @@ if __name__ == "__main__":
     Y_tr = ims_tr
     X_ts = ims_ts + np.abs(np.random.randn(*ims_ts.shape) * .1)
     Y_ts = ims_ts
+    perm_ids = np.random.permutation(X_tr.shape[0])
+
+    def fetch_data(batch_size, data_type):
+        n_train = int(perm_ids.size * .9)
+        if data_type == 'train':
+            ids = np.random.choice(perm_ids[:n_train], batch_size, replace=True)
+        else:
+            ids = np.random.choice(perm_ids[n_train:], batch_size, replace=True)
+        return X_tr[ids], Y_tr[ids]
 
     # Define the graph.
     fcnn = FCNN(x_shape = ims_tr.shape[1:])
@@ -311,7 +288,7 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(X_tr, Y_tr, sess, epochs=100, writer=writer, summary=summary)
+        fcnn.fit(sess, fetch_data, epochs=100, writer=writer, summary=summary)
 
         # Predict.
         Y_pred = fcnn.predict(X_ts, sess).reshape(-1, 28, 28)
