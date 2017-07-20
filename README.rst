@@ -83,7 +83,7 @@ Our FCNN indeed learned to denoise noisy MNIST by smoothing images:
         :alt: Example NN training output.
         :align: center
         
-You can also use `Tensorboard`_ to training and validation validation loss, and all kinds of other training stats:
+You can also use `Tensorboard`_ to visualize training and validation validation loss, and all kinds of other training stats:
 
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/tr_loss.png
         :alt: Validation loss.
