@@ -64,9 +64,10 @@ class FCNN(object):
 
     Args:
         x_shape (int, int, int): Input shape (h, w, d).
-            NOTE: Right now, output shape is
+            NOTE: Right now, output h and w is
             restricted to be the same as the input shape. You can easily
             modify this behavior if needed by adjusting the architecture.
+        y_channels (int): Number of output channels.
         n_layers (int): Number of fully-convolutional residual layers.
         n_filters: An integer array of shape (n_layers,). Number of filters
             in each layer.
@@ -77,13 +78,14 @@ class FCNN(object):
 
     TODO: This first version has no residual connections!
     """
-    def __init__(self, x_shape, n_layers=4, n_filters=None,
+    def __init__(self, x_shape, y_channels, n_layers=4, n_filters=None,
         x_tf=None, reuse=False, bn=True, res=True, **kwargs):
         if n_filters is None:
             n_filters = np.array([64] * n_layers)
         if n_layers != len(n_filters):
             raise ValueError('Number of layers must equal len(n_filters)')
         self.x_shape = x_shape
+        self.y_channels = y_channels
         self.n_layers = n_layers
         self.n_filters = n_filters
         self.reuse = reuse
@@ -97,7 +99,7 @@ class FCNN(object):
         else:
             self.x_tf = x_tf
         self.y_tf = tf.placeholder(tf.float32,
-            [None, x_shape[0], x_shape[1], x_shape[2]], name='output')
+            [None, x_shape[0], x_shape[1], y_channels], name='output')
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
         self.is_training = tf.placeholder(tf.bool, name='train_flag')
 
@@ -119,6 +121,17 @@ class FCNN(object):
         """ Define the FCNN. """
         y_pred = self.x_tf
 
+        # Local response normalization.
+        y_pred = tf.nn.lrn(y_pred, name='lrn')
+
+        # Use 1x1 convolutions to reshape the channel direction
+        # for use with residual connections.
+        if self.res:
+            with tf.variable_scope('inflatten'):
+                y_pred = tf.layers.conv2d(
+                    y_pred, filters=1, kernel_size=1,
+                    reuse=self.reuse)
+
         # Create the hidden layers.
         for layer_id in range(self.n_layers):
             with tf.variable_scope('layer{}'.format(layer_id)):
@@ -126,12 +139,12 @@ class FCNN(object):
                     self.n_filters[layer_id], self.res, self.reuse)
                 
         # The final layer polls depth channels with 1x1 convolutions.
-        with tf.variable_scope('1x1conv'):
+        with tf.variable_scope('outflatten'):
             y_pred = tf.layers.conv2d(
-                y_pred, filters=self.x_shape[2], kernel_size=1, padding='same',
+                y_pred, filters=self.y_channels, kernel_size=1, padding='same',
                 activation=None, reuse=self.reuse)
 
-        return y_pred
+        return tf.nn.sigmoid(y_pred)
 
     def define_loss(self):
         loss = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
@@ -159,7 +172,7 @@ class FCNN(object):
         return y_pred
 
     def fit(self, sess, fetch_data, epochs=1000, batch_size=128,
-            lr=1e-3, valsize=.1, nn_verbose=True,
+            lr=1e-3, nn_verbose=True,
             writer=None, summary=None, **kwargs):
         """ Train the MDN to maximize the data likelihood.
 
@@ -173,8 +186,6 @@ class FCNN(object):
             epochs (int): How many batches to train for.
             batch_size (int): Training batch size.
             lr (float): Learning rate.
-            valsize (float): Proportion of data
-                (between 0 and 1) for validation.
             nn_verbose (bool): Display training progress messages (or not).
             writer: A writer object for Tensorboard bookkeeping.
             summary: Summary object for the writer.
@@ -208,10 +219,10 @@ class FCNN(object):
                     [self.train_op_tf, self.loss_tf, summary, tr_summary],
                     feed_dict)
             
-            val_data = fetch_data(batch_size, 'val')
+            val_data = fetch_data(batch_size * 10, 'val')
             if val_data is not None:
                 x, y = val_data
-                feed_dict[self.is_training] = False
+                feed_dict[self.is_training] = True
                 feed_dict[self.x_tf] = x
                 feed_dict[self.y_tf] = y
                 val_loss, vals = sess.run([self.loss_tf, val_summary],
@@ -252,6 +263,9 @@ if __name__ == "__main__":
     """ Check that the network works as expected. Denoise MNIST. 
     Takes about a minute on a Titan X GPU.
     """
+    import matplotlib
+    from sklearn.preprocessing import StandardScaler
+    matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from tensorflow.examples.tutorials.mnist import input_data
     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
@@ -260,9 +274,9 @@ if __name__ == "__main__":
 
     # Create a dataset of MNIST with random binary noise as inputs
     # and the original digits as outputs.
-    X_tr = ims_tr + np.abs(np.random.randn(*ims_tr.shape) * .1)
+    X_tr = ims_tr + np.random.randn(*ims_tr.shape) * .1
     Y_tr = ims_tr
-    X_ts = ims_ts + np.abs(np.random.randn(*ims_ts.shape) * .1)
+    X_ts = ims_ts + np.random.randn(*ims_ts.shape) * .1
     Y_ts = ims_ts
     perm_ids = np.random.permutation(X_tr.shape[0])
 
@@ -275,7 +289,8 @@ if __name__ == "__main__":
         return X_tr[ids], Y_tr[ids]
 
     # Define the graph.
-    fcnn = FCNN(x_shape = ims_tr.shape[1:])
+    fcnn = FCNN(x_shape=X_tr.shape[1:],
+        y_channels=Y_tr.shape[-1], bn=True, res=True)
 
     # Create a Tensorflow session and train the net.
     with tf.Session() as sess:
@@ -291,26 +306,26 @@ if __name__ == "__main__":
         fcnn.fit(sess, fetch_data, epochs=100, writer=writer, summary=summary)
 
         # Predict.
-        Y_pred = fcnn.predict(X_ts, sess).reshape(-1, 28, 28)
+        Y_pred = fcnn.predict(X_ts[:1000], sess).reshape(-1, 28, 28)
     
     # Show the results.
     plt.figure(figsize=(16, 6))
-    for im_id_id, im_id in enumerate(np.random.choice(X_ts.shape[0], 8)):
-        plt.subplot2grid((3, 8), (0, im_id_id))
+    for im_id in range(8):
+        plt.subplot2grid((3, 8), (0, im_id))
         plt.title('Noisy')
         plt.axis('off')
         plt.imshow(X_ts[im_id].reshape(28, 28),
             cmap='Greys', interpolation='nearest')
 
-        plt.subplot2grid((3, 8), (1, im_id_id))
+        plt.subplot2grid((3, 8), (1, im_id))
         plt.title('Denoised')
         plt.axis('off')
         plt.imshow(Y_pred[im_id], cmap='Greys', interpolation='nearest')
 
-        plt.subplot2grid((3, 8), (2, im_id_id))
+        plt.subplot2grid((3, 8), (2, im_id))
         plt.title('Original')
         plt.axis('off')
         plt.imshow(Y_ts[im_id].reshape(28, 28),
             cmap='Greys', interpolation='nearest')
 
-    plt.show()
+    plt.savefig('fcnn_results.png')
