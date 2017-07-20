@@ -77,7 +77,7 @@ This trains an FCNN. The default settings set up a tiny network, with the advant
         :alt: Example FCNN graph.
         :align: center
 
-Our FCNN indeed learned to denoise noisy MNIST by smoothing images:
+Our FCNN indeed learned to denoise noisy MNIST pretty well:
 
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/smoothmnist.png
         :alt: Example NN training output.
