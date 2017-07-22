@@ -115,13 +115,13 @@ class SegmentNN(FCNN):
         for layer_id in range(self.n_layers):
             with tf.variable_scope('layer{}'.format(layer_id)):
                 y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                    self.n_filters[layer_id], self.res, self.reuse)
+                    n_filters=self.n_filters[layer_id], stride=(1, 1), 
+                    residual=self.res, reuse=self.reuse)
 
         # Deconvolve the image back to its original shape.
         with tf.variable_scope('upsample'):
-            import pdb; pdb.set_trace()
             y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                n_filters=1, kernel_size=1, residual=self.res, reuse=self.reuse)
+                n_filters=1, kernel_size=1, residual=False, reuse=self.reuse)
             y_pred = tf.image.resize_images(y_pred, self.x_shape[:2])
 
         return y_pred
@@ -164,8 +164,8 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(sess, fetch_data, epochs=100,
-            batch_size=256, lr=0.1, writer=writer, summary=summary)
+        #fcnn.fit(sess, fetch_data, epochs=100,
+        #    batch_size=256, lr=0.1, writer=writer, summary=summary)
 
         # Predict.
         ims_ts, masks_ts = fetch_data(640, 'test')

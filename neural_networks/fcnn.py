@@ -104,7 +104,7 @@ class FCNN(object):
         self.y_tf = tf.placeholder(tf.float32,
             [None, x_shape[0], x_shape[1], y_channels], name='output')
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
-        self.is_training = tf.placeholder(tf.bool, name='train_flag')
+        self.is_training_tf = tf.placeholder(tf.bool, name='train_flag')
 
         # Inference.
         self.y_pred = self.define_fcnn(**kwargs)
@@ -138,7 +138,7 @@ class FCNN(object):
         # Create the hidden layers.
         for layer_id in range(self.n_layers):
             with tf.variable_scope('layer{}'.format(layer_id)):
-                y_pred = bn_relu_conv(y_pred, self.is_training,
+                y_pred = bn_relu_conv(y_pred, self.is_training_tf,
                     self.n_filters[layer_id], self.res, self.reuse)
                 
         # The final layer polls depth channels with 1x1 convolutions.
@@ -170,7 +170,7 @@ class FCNN(object):
         Returns:
             y (n_samples, y_dim): Predicted outputs.
         """
-        feed_dict = {self.x_tf: x, self.is_training: False}
+        feed_dict = {self.x_tf: x, self.is_training_tf: False}
         y_pred = sess.run(self.y_pred, feed_dict)
         return y_pred
 
@@ -210,7 +210,7 @@ class FCNN(object):
             x, y = fetch_data(batch_size, 'train')
             feed_dict = {self.x_tf: x,
                          self.y_tf: y,
-                         self.is_training: True,
+                         self.is_training_tf: True,
                          self.lr_tf: lr}
 
             if summary is None:
@@ -225,7 +225,7 @@ class FCNN(object):
             val_data = fetch_data(batch_size, 'val')
             if val_data is not None:
                 x, y = val_data
-                feed_dict[self.is_training] = True
+                feed_dict[self.is_training_tf] = True
                 feed_dict[self.x_tf] = x
                 feed_dict[self.y_tf] = y
                 val_loss, vals = sess.run([self.loss_tf, val_summary],
