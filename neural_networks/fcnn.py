@@ -12,7 +12,7 @@ import tensorflow as tf
 from neural_networks import scalers
 
 def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
-    residual=False, reuse=False):
+    kernel_size=3, stride=(1, 1), residual=False, reuse=False):
     """ A convolutional resnet building block.
     
     Pushes in_tf through batch_norm, relu, and convolution.
@@ -23,7 +23,9 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
         in_tf: Input tensor.
         is_training_tf: bool tensor, indicates whether we're in the training
             phase or not (used by batch_norm and dropout).
-        n_filters (int): Number of 3x3 convolution filters.
+        n_filters (int): Number of convolution filters.
+        kernel_size (int): Size of the kernel.
+        stride (tuple(int, int)): Kernel strides.
         residual (bool): Whether to make the layer residual.
         reuse (bool): Whether to reuse Tensorflow variables.
 
@@ -36,19 +38,19 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
         in_tf, center=True, scale=True, training=is_training_tf)
 
     # Apply the nonlinearity.
-    out_tf = tf.nn.elu(out_tf)
+    out_tf = tf.nn.relu(out_tf)
 
     # Apply convolutions.
     out_tf = tf.layers.conv2d(
-        out_tf, filters=n_filters, kernel_size=3,
+        out_tf, filters=n_filters, kernel_size=kernel_size, strides=stride,
         padding='same', activation=None, reuse=reuse, name='conv1')
 
     if residual:
         out_tf = tf.layers.batch_normalization(
             out_tf, center=True, scale=True, training=is_training_tf)
-        out_tf = tf.nn.elu(out_tf)
+        out_tf = tf.nn.relu(out_tf)
         out_tf = tf.layers.conv2d(
-            out_tf, filters=n_filters, kernel_size=3,
+            out_tf, filters=n_filters, kernel_size=kernel_size, strides=stride,
             padding='same', activation=None, reuse=reuse, name='conv2')
         out_tf += in_tf
     tf.summary.histogram('ftr_map', out_tf)
@@ -75,6 +77,7 @@ class FCNN(object):
         reuse (bool): Whether to reuse the net weights.
         bn (bool): Whether to use batch normalization.
         res (bool): Whether to add residual connections.
+        save_fname (str): Checkpoint location.
 
     TODO: This first version has no residual connections!
     """
@@ -144,7 +147,7 @@ class FCNN(object):
                 y_pred, filters=self.y_channels, kernel_size=1, padding='same',
                 activation=None, reuse=self.reuse)
 
-        return tf.nn.sigmoid(y_pred)
+        return y_pred
 
     def define_loss(self):
         loss = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
@@ -219,7 +222,7 @@ class FCNN(object):
                     [self.train_op_tf, self.loss_tf, summary, tr_summary],
                     feed_dict)
             
-            val_data = fetch_data(batch_size * 10, 'val')
+            val_data = fetch_data(batch_size, 'val')
             if val_data is not None:
                 x, y = val_data
                 feed_dict[self.is_training] = True
@@ -241,8 +244,12 @@ class FCNN(object):
             val_losses[epoch_id] = val_loss
             if val_loss < best_val:
                 best_val = val_loss
-                model_path = self.saver.save(
-                    sess, self.tmpfile.name)
+                if self.save_fname is not None:
+                    model_path = self.saver.save(
+                        sess, self.save_fname)
+                else:
+                    model_path = self.saver.save(
+                        sess, self.tmpfile.name)
 
             tr_time = time.time() - start_time
             if nn_verbose:
@@ -251,6 +258,7 @@ class FCNN(object):
                                   ).format(epoch_id, int(tr_time),
                                            tr_loss, val_loss, best_val))
                 sys.stdout.flush()
+
         # Restore the net with best validation loss.
         self.saver.restore(sess, model_path)
         if nn_verbose:
