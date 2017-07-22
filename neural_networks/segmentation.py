@@ -23,19 +23,40 @@ annFile = dataDir + 'annotations/instances_{}.json'.format(dataType)
 # Initialize COCO api for instance annotations.
 coco=COCO(annFile)
 
-def get_img_and_mask(img_id, cat_id, coco):
-    img = coco.loadImgs(int(img_id))[0]
-    image = io.imread('{}/{}'.format(imageDir, img['file_name']))
-    annIds = coco.getAnnIds(imgIds=img['id'], catIds=[cat_id], iscrowd=None)
+def get_img_and_mask(img_ids, im_size,  cat_id, coco):
+    """ Choose an id at random from image_ids. Check whether corresponding mask
+    contains at least 1% positive class. If so, crop out a random patch of
+    im_size and return it. If not, return good_image=False.
+    """
+    img_id = np.random.choice(img_ids)
+    image = coco.loadImgs(int(img_id))[0]
+    annIds = coco.getAnnIds(imgIds=image['id'], catIds=[cat_id], iscrowd=None)
+    image = io.imread('{}/{}'.format(imageDir, image['file_name']))
     ann = coco.loadAnns(annIds)
     mask = np.zeros((image.shape[0], image.shape[1]))
     for ann_single in ann:
         mask += coco.annToMask(ann_single)
     mask[mask > 1] = 1
-    return image, mask
+    if mask.sum() > mask.size / 100.:
+        if False and image.shape[0] > im_shape[0] and image.shape[1] > im_shape[1]:
+            h_start = np.random.choice(image.shape[0] - im_shape[0])
+            w_start = np.random.choice(image.shape[1] - im_shape[1])
+            image = image[h_start:h_start + im_shape[0],
+                    w_start:w_start + im_shape[1]] / 255.
+            mask = mask[h_start:h_start + im_shape[0],
+                    w_start:w_start + im_shape[1]]
+        else:
+            image = skimage.transform.resize(image, im_size[:2])
+            mask = skimage.transform.resize(mask, im_size[:2])
+        return image, mask, True
+    else:
+        return None, None, False
 
 def get_coco_batch(category, batch_size, im_size, coco, data_type='traffic light'):
+    # Get ids of current category.
     cat_id = coco.getCatIds(catNms=[category])[0]
+
+    # Split into train/validation/test.
     st0 = np.random.get_state()
     np.random.seed(1)
     img_ids = np.random.permutation(coco.getImgIds(catIds=cat_id))
@@ -43,32 +64,24 @@ def get_coco_batch(category, batch_size, im_size, coco, data_type='traffic light
     n_train = int(len(img_ids) * .8)
     n_valid = int(len(img_ids) * .1)
     if data_type == 'train':
-        img_ids = np.random.choice(img_ids[:n_train], batch_size, replace=True)
+        img_ids = img_ids[:n_train]
     elif data_type == 'val':
-        img_ids = np.random.choice(img_ids[n_train:n_train+n_valid],
-            batch_size, replace=True)
+        img_ids = img_ids[n_train:n_train+n_valid]
     elif data_type == 'test':
-        img_ids = np.random.choice(img_ids[n_train+n_valid:],
-            batch_size, replace=True)
+        img_ids = img_ids[n_train+n_valid:]
+
+    # Fetch the batch.
     ims = np.zeros((batch_size, im_size[0], im_size[1], 3))
     masks = np.zeros((batch_size, im_size[0], im_size[1], 1))
-    for img_id_id, img_id in enumerate(img_ids):
-        img, mask = get_img_and_mask(img_id, cat_id, coco)
-        if img.shape[0] > im_shape[0] and img.shape[1] > im_shape[1]:
-            h_start = np.random.choice(img.shape[0] - im_shape[0])
-            w_start = np.random.choice(img.shape[1] - im_shape[1])
-            img = img[h_start:h_start + im_shape[0],
-                    w_start:w_start + im_shape[1]]
-            mask = mask[h_start:h_start + im_shape[0],
-                    w_start:w_start + im_shape[1]]
+    for img_id in range(batch_size):
+        good_image = False
+        while not good_image:
+            image, mask, good_image = get_img_and_mask(img_ids, im_size, cat_id, coco)
+        if len(image.shape) == 2:
+            ims[img_id] = skimage.color.gray2rgb(image)
         else:
-            img = skimage.transform.resize(img, im_size[:2])
-            mask = skimage.transform.resize(mask, im_size[:2])
-        if len(img.shape) == 2:
-            ims[img_id_id] = skimage.color.gray2rgb(img)
-        else:
-            ims[img_id_id] = img
-        masks[img_id_id, :, :, 0] = mask
+            ims[img_id] = image
+        masks[img_id, :, :, 0] = mask
     return ims, masks
 
 class SegmentNN(FCNN):
@@ -120,6 +133,7 @@ class SegmentNN(FCNN):
                 y_pred = bn_relu_conv(y_pred, self.is_training_tf,
                     n_filters=self.n_filters[0] * 2, stride=(1, 1), 
                     residual=self.res, reuse=self.reuse)
+            intermediate_layer = y_pred
 
         with tf.variable_scope('downsample3'):
             y_pred = tf.layers.max_pooling2d(
@@ -131,12 +145,24 @@ class SegmentNN(FCNN):
                     residual=self.res, reuse=self.reuse)
 
         # Deconvolve the image back to its original shape.
-        with tf.variable_scope('upsample'):
-            #y_pred = conv2d_transpose(y_pred, filters=self.n_filters[0],
-            #    kernel_size=(3, 3), strides=(16, 16), padding='same', use_bias=False)
+        with tf.variable_scope('upsample1'):
+            y_pred = tf.layers.conv2d_transpose(y_pred, filters=self.n_filters[0],
+                kernel_size=(5, 5), strides=(2, 2), padding='same', use_bias=False)
             y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                n_filters=1, kernel_size=1, residual=False, reuse=self.reuse)
-            y_pred = tf.image.resize_images(y_pred, self.x_shape[:2])
+                n_filters=self.n_filters[0] * 2, stride=(1, 1), 
+                residual=self.res, reuse=self.reuse)
+            y_pred += intermediate_layer
+
+        with tf.variable_scope('upsample2'):
+            y_pred = bn_relu_conv(y_pred, self.is_training_tf,
+                n_filters=1, stride=(1, 1), kernel_size=(3, 3),
+                residual=self.res, reuse=self.reuse)
+            y_pred = tf.image.resize_images(y_pred, size=self.x_shape[:2])
+            #y_pred = tf.layers.conv2d_transpose(y_pred, filters=self.n_filters[0],
+            #    kernel_size=(7, 7), strides=(8, 8), padding='same', use_bias=False)
+            #y_pred = bn_relu_conv(y_pred, self.is_training_tf,
+            #    n_filters=1, stride=(1, 1), 
+            #    residual=self.res, reuse=self.reuse)
 
         return y_pred
     
@@ -164,7 +190,7 @@ if __name__ == "__main__":
     # Define the graph.
     fcnn = SegmentNN(x_shape = im_shape + [3], y_channels=1,
         n_layers=n_layers, res=False, n_filters=np.array(
-            [32] * n_layers),
+            [48] * n_layers),
         save_fname='segment_person', pos_weight=1.)
 
 
@@ -180,7 +206,7 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(sess, fetch_data, epochs=1000,
+        fcnn.fit(sess, fetch_data, epochs=100,
             batch_size=batch_size, lr=0.1, writer=writer, summary=summary)
 
         # Predict.
@@ -192,13 +218,13 @@ if __name__ == "__main__":
     for im_id_id, im_id in enumerate(range(batch_size-8, batch_size)):
         print(im_id)
         plt.subplot2grid((3, 8), (0, im_id_id))
-        plt.imshow(ims_ts[im_id], interpolation='nearest')
+        plt.imshow(ims_ts[im_id], interpolation='nearest', vmin=0, vmax=1)
 
         plt.subplot2grid((3, 8), (1, im_id_id))
-        plt.imshow(ims_ts[im_id], interpolation='nearest')
+        plt.imshow(ims_ts[im_id], interpolation='nearest', vmin=0, vmax=1)
         plt.imshow(Y_pred[im_id].squeeze(), cmap='gray', alpha=.8)
 
         plt.subplot2grid((3, 8), (2, im_id_id))
-        plt.imshow(ims_ts[im_id], interpolation='nearest')
+        plt.imshow(ims_ts[im_id], interpolation='nearest', vmin=0, vmax=1)
         plt.imshow(masks_ts[im_id].squeeze() > .5, cmap='gray', alpha=.8)
     plt.savefig('segmentation_results.png')
