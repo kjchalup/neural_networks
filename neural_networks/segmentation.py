@@ -3,6 +3,7 @@ import matplotlib
 matplotlib.use('Agg')
 from pycocotools.coco import COCO
 import numpy as np
+from sklearn.feature_extraction.image import extract_patches_2d
 import skimage.transform
 import skimage.color
 import skimage.io as io
@@ -53,12 +54,21 @@ def get_coco_batch(category, batch_size, im_size, coco, data_type='traffic light
     masks = np.zeros((batch_size, im_size[0], im_size[1], 1))
     for img_id_id, img_id in enumerate(img_ids):
         img, mask = get_img_and_mask(img_id, cat_id, coco)
-        img = skimage.transform.resize(img, im_size[:2])
+        if img.shape[0] > im_shape[0] and img.shape[1] > im_shape[1]:
+            h_start = np.random.choice(img.shape[0] - im_shape[0])
+            w_start = np.random.choice(img.shape[1] - im_shape[1])
+            img = img[h_start:h_start + im_shape[0],
+                    w_start:w_start + im_shape[1]]
+            mask = mask[h_start:h_start + im_shape[0],
+                    w_start:w_start + im_shape[1]]
+        else:
+            img = skimage.transform.resize(img, im_size[:2])
+            mask = skimage.transform.resize(mask, im_size[:2])
         if len(img.shape) == 2:
             ims[img_id_id] = skimage.color.gray2rgb(img)
         else:
             ims[img_id_id] = img
-        masks[img_id_id, :, :, 0] = skimage.transform.resize(mask, im_size[:2])
+        masks[img_id_id, :, :, 0] = mask
     return ims, masks
 
 class SegmentNN(FCNN):
@@ -86,22 +96,6 @@ class SegmentNN(FCNN):
         """ Define the segmentation network. """
         y_pred = self.x_tf
 
-        # During training only: apply random transformations to the input image
-        # to augment the training set size and reduce overfitting.
-        #y_pred = tf.cond(self.is_training_tf,
-        #        true_fn=lambda: tf.map_fn(tf.image.random_flip_left_right, self.x_tf),
-        #        false_fn=lambda: y_pred)
-
-        #y_pred = tf.cond(self.is_training_tf,
-        #        true_fn=lambda: tf.map_fn(
-        #            lambda img: tf.image.random_brightness(img, .3), self.x_tf),
-        #        false_fn=lambda: y_pred)
-
-        #y_pred = tf.cond(self.is_training_tf,
-        #        true_fn=lambda: tf.map_fn(
-        #            lambda img: tf.image.random_contrast(img, .9, 1/.9), self.x_tf),
-        #        false_fn=lambda: y_pred)
-
         # Downsample the images. E.g. a 224x224x3 image should be shrunk to
         # 56x56x64 after these operations.
         with tf.variable_scope('downsample'):
@@ -118,8 +112,28 @@ class SegmentNN(FCNN):
                     n_filters=self.n_filters[layer_id], stride=(1, 1), 
                     residual=self.res, reuse=self.reuse)
 
+        with tf.variable_scope('downsample2'):
+            y_pred = tf.layers.max_pooling2d(
+                y_pred, pool_size=2, strides=(2, 2), padding='same')
+        for layer_id in range(self.n_layers, 2 * self.n_layers):
+            with tf.variable_scope('layer{}'.format(layer_id)):
+                y_pred = bn_relu_conv(y_pred, self.is_training_tf,
+                    n_filters=self.n_filters[0] * 2, stride=(1, 1), 
+                    residual=self.res, reuse=self.reuse)
+
+        with tf.variable_scope('downsample3'):
+            y_pred = tf.layers.max_pooling2d(
+                y_pred, pool_size=2, strides=(2, 2), padding='same')
+        for layer_id in range(2*self.n_layers, 3*self.n_layers):
+            with tf.variable_scope('layer{}'.format(layer_id)):
+                y_pred = bn_relu_conv(y_pred, self.is_training_tf,
+                    n_filters=self.n_filters[0] * 4, stride=(1, 1), 
+                    residual=self.res, reuse=self.reuse)
+
         # Deconvolve the image back to its original shape.
         with tf.variable_scope('upsample'):
+            #y_pred = conv2d_transpose(y_pred, filters=self.n_filters[0],
+            #    kernel_size=(3, 3), strides=(16, 16), padding='same', use_bias=False)
             y_pred = bn_relu_conv(y_pred, self.is_training_tf,
                 n_filters=1, kernel_size=1, residual=False, reuse=self.reuse)
             y_pred = tf.image.resize_images(y_pred, self.x_shape[:2])
@@ -139,7 +153,7 @@ if __name__ == "__main__":
     Takes about a minute on a Titan X GPU.
     """
     im_shape = [224, 224] # Images will be reshaped to this shape.
-    n_layers = 6
+    n_layers = 4
     batch_size = 128
 
     def fetch_data(batch_size, data_type):
@@ -149,8 +163,9 @@ if __name__ == "__main__":
 
     # Define the graph.
     fcnn = SegmentNN(x_shape = im_shape + [3], y_channels=1,
-        n_layers=n_layers, res=True, n_filters=np.array([64] * n_layers),
-        save_fname='segment_person', pos_weight=2.)
+        n_layers=n_layers, res=False, n_filters=np.array(
+            [32] * n_layers),
+        save_fname='segment_person', pos_weight=1.)
 
 
     # Create a Tensorflow session and train the net.
@@ -181,7 +196,7 @@ if __name__ == "__main__":
 
         plt.subplot2grid((3, 8), (1, im_id_id))
         plt.imshow(ims_ts[im_id], interpolation='nearest')
-        plt.imshow(Y_pred[im_id].squeeze() > .5, cmap='gray', alpha=.8)
+        plt.imshow(Y_pred[im_id].squeeze(), cmap='gray', alpha=.8)
 
         plt.subplot2grid((3, 8), (2, im_id_id))
         plt.imshow(ims_ts[im_id], interpolation='nearest')
