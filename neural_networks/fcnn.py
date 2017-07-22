@@ -12,7 +12,7 @@ import tensorflow as tf
 from neural_networks import scalers
 
 def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
-    kernel_size=3, stride=(1, 1), residual=False, reuse=False):
+    kernel_size=3, stride=(1, 1), nonlin=tf.nn.elu, residual=False, reuse=False):
     """ A convolutional resnet building block.
     
     Pushes in_tf through batch_norm, relu, and convolution.
@@ -38,7 +38,7 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
         in_tf, center=True, scale=True, training=is_training_tf)
 
     # Apply the nonlinearity.
-    out_tf = tf.nn.relu(out_tf)
+    out_tf = nonlin(out_tf)
 
     # Apply convolutions.
     out_tf = tf.layers.conv2d(
@@ -48,7 +48,7 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
     if residual:
         out_tf = tf.layers.batch_normalization(
             out_tf, center=True, scale=True, training=is_training_tf)
-        out_tf = tf.nn.relu(out_tf)
+        out_tf = nonlin(out_tf)
         out_tf = tf.layers.conv2d(
             out_tf, filters=n_filters, kernel_size=kernel_size, strides=stride,
             padding='same', activation=None, reuse=reuse, name='conv2')
@@ -77,12 +77,12 @@ class FCNN(object):
         reuse (bool): Whether to reuse the net weights.
         bn (bool): Whether to use batch normalization.
         res (bool): Whether to add residual connections.
-        save_fname (str): Checkpoint location.
+        save_fname (str): Checkpoint location. If None, use a temp file.
 
     TODO: This first version has no residual connections!
     """
     def __init__(self, x_shape, y_channels, n_layers=4, n_filters=None,
-        x_tf=None, reuse=False, bn=True, res=True, **kwargs):
+        x_tf=None, reuse=False, bn=True, res=True, save_fname=None, **kwargs):
         if n_filters is None:
             n_filters = np.array([64] * n_layers)
         if n_layers != len(n_filters):
@@ -94,6 +94,7 @@ class FCNN(object):
         self.reuse = reuse
         self.bn = bn
         self.res = res
+        self.save_fname = save_fname
 
         # Set up the placeholders.
         if x_tf is None:
