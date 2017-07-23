@@ -294,7 +294,7 @@ if __name__ == "__main__":
     # Create a dataset of MNIST with random binary noise as inputs
     # and the original digits as outputs.
     X_tr = np.array(ims_tr)
-    p_noise = .3
+    p_noise = .2
     noise_ids = np.random.choice([0, 1],
         size=X_tr.shape, p=[1-p_noise, p_noise]).astype(bool)
     X_tr[noise_ids] = np.random.uniform(
