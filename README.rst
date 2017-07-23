@@ -5,29 +5,26 @@ Neural nets in `TensorFlow`_.
     :target: http://www.gnu.org/licenses/gpl-3.0
     :alt: GPL 3.0 License
 
-`TensorFlow`_ is a low-level framework for building and executing
-computational graphs. There are now numerous
-higher-level frameworks built on top of `TensorFlow`_ that implement neural
-networks (e.g. `Keras`_, now officially supported by `TensorFlow`_).
+`TensorFlow`_ is a relatively low-level framework for building and executing
+computational graphs. There are higher-level frameworks built on top of `TensorFlow`_ that implement neural
+networks (e.g. `Keras`_).
 
 This repository implements one such high-level framework.
 In research, I need low-level control over the computational graph,
-but I also find I often re-use basic neural net architectures. This makes it
+but I also often reuse basic neural net architectures. This makes it
 inconvenient to use pre-existing frameworks (lack of low-level control) --
-but I don't want to re-implement basic nn components each time.
+but I don't want to reimplement basic nn components each time.
 
-Why would anyone use this repository?
+Why would you use this repository?
 
-    * You are me, and use it for doing research.
-    * You are a Tensorflow beginner, and want to see how to implement stuff. I certainly learned a lot looking at other people's repositories!
-    * If you want to use my implementations in your own projects please do, though you'll probably learn more and get best results if you re-implement it yourself.
+    * You are a Tensorflow beginner, and want to see how to implement stuff. I certainly learned a lot looking at other people's tf code!
+    * If you want to use my implementations in your own projects please do, though you'll probably learn more and get best results if you do your own coding.
 
 Usage
 -----
 I tried to mimic the `scikit-learn`_ interface. You fit a network
-using nn.fit, and predict with nn.predict methods. In some cases
-there are other useful methods, e.g. GANs (see below) have a gan.sample()
-method.
+using nn.fit, and predict with nn.predict. In some cases
+there are other useful methods, e.g. GANs can gan.sample().
 See individual module documentation for more details.
 
 Each module's usage is exemplified in its __main__ part.
