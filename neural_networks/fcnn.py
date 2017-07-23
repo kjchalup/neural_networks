@@ -9,10 +9,9 @@ from tempfile import NamedTemporaryFile
 import numpy as np
 import tensorflow as tf
 
-from neural_networks import scalers
-
 def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
-    kernel_size=3, stride=(1, 1), nonlin=tf.nn.relu, residual=False, bn=True, reuse=False):
+    kernel_size=3, stride=(1, 1), nonlin=tf.nn.relu,
+    residual=False, bn=True, reuse=False):
     """ A convolutional resnet building block.
     
     Pushes in_tf through batch_norm, relu, and convolution.
@@ -26,7 +25,9 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
         n_filters (int): Number of convolution filters.
         kernel_size (int): Size of the kernel.
         stride (tuple(int, int)): Kernel strides.
+        nonlin (tf function): Activation function.
         residual (bool): Whether to make the layer residual.
+        bn (bool): Whether to use batch normalization.
         reuse (bool): Whether to reuse Tensorflow variables.
 
     Returns:
@@ -86,7 +87,8 @@ class FCNN(object):
     TODO: This first version has no residual connections!
     """
     def __init__(self, x_shape, y_channels, n_layers=4, n_filters=None,
-        x_tf=None, y_tf=None, reuse=False, bn=True, res=True, save_fname=None, **kwargs):
+        x_tf=None, y_tf=None, reuse=False, bn=True, res=True,
+        save_fname=None, **kwargs):
         if n_filters is None:
             n_filters = np.array([64] * n_layers)
         if n_layers != len(n_filters):
@@ -147,7 +149,9 @@ class FCNN(object):
         for layer_id in range(self.n_layers):
             with tf.variable_scope('layer{}'.format(layer_id)):
                 y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                    self.n_filters[layer_id], self.res, self.reuse)
+                    n_filters=self.n_filters[layer_id], kernel_size=3,
+                    stride=(1, 1), nonlin=tf.nn.relu, residual=self.res,
+                    bn=True, reuse=self.reuse)
                 
         # The final layer polls depth channels with 1x1 convolutions.
         with tf.variable_scope('outflatten'):
@@ -155,7 +159,7 @@ class FCNN(object):
                 y_pred, filters=self.y_channels, kernel_size=1, padding='same',
                 activation=None, reuse=self.reuse)
 
-        return y_pred
+        return tf.nn.sigmoid(y_pred)
 
     def define_loss(self):
         loss = tf.losses.mean_squared_error(self.y_tf, self.y_pred)
@@ -185,7 +189,7 @@ class FCNN(object):
     def fit(self, sess, fetch_data, epochs=1000, batch_size=128,
             lr=1e-3, nn_verbose=True,
             writer=None, summary=None, **kwargs):
-        """ Train the MDN to maximize the data likelihood.
+        """ Train the FCNN.
 
         Args:
             sess: Tensorflow session.
@@ -280,20 +284,29 @@ if __name__ == "__main__":
     Takes about a minute on a Titan X GPU.
     """
     import matplotlib
-    from sklearn.preprocessing import StandardScaler
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     from tensorflow.examples.tutorials.mnist import input_data
-    mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
+    mnist = input_data.read_data_sets("MNIST_data/")
     ims_tr = mnist.train.images.reshape(-1, 28, 28, 1)
     ims_ts = mnist.test.images.reshape(-1, 28, 28, 1)
 
     # Create a dataset of MNIST with random binary noise as inputs
     # and the original digits as outputs.
-    X_tr = ims_tr + np.random.randn(*ims_tr.shape) * .1
+    X_tr = np.array(ims_tr)
+    p_noise = .3
+    noise_ids = np.random.choice([0, 1],
+        size=X_tr.shape, p=[1-p_noise, p_noise]).astype(bool)
+    X_tr[noise_ids] = np.random.uniform(
+        low=0, high=1, size=X_tr.shape)[noise_ids]
     Y_tr = ims_tr
-    X_ts = ims_ts + np.random.randn(*ims_ts.shape) * .1
+
+    X_ts = np.array(ims_ts)
+    noise_ids = np.random.choice([0, 1],
+        size=X_ts.shape, p=[1-p_noise, p_noise]).astype(bool)
+    X_ts[noise_ids] = np.random.uniform(low=0, high=1, size=X_ts.shape)[noise_ids]
     Y_ts = ims_ts
+
     perm_ids = np.random.permutation(X_tr.shape[0])
 
     def fetch_data(batch_size, data_type):
@@ -305,13 +318,14 @@ if __name__ == "__main__":
         return X_tr[ids], Y_tr[ids]
 
     # Define the graph.
-    fcnn = FCNN(x_shape=X_tr.shape[1:],
+    fcnn = FCNN(x_shape=X_tr.shape[1:], save_fname='logs/fcnn_save',
         y_channels=Y_tr.shape[-1], bn=True, res=True)
 
     # Create a Tensorflow session and train the net.
     with tf.Session() as sess:
         # Define the Tensorflow session, and its initializer op.
         sess.run(tf.global_variables_initializer())
+        #fcnn.saver.restore(sess, 'logs/fcnn_save')
 
         # Use a writer object for Tensorboard visualization.
         summary = tf.summary.merge_all()
@@ -319,7 +333,8 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(sess, fetch_data, epochs=100, writer=writer, summary=summary)
+        fcnn.fit(sess, fetch_data, lr=1e-3, epochs=1000,
+            writer=writer, summary=summary)
 
         # Predict.
         Y_pred = fcnn.predict(X_ts[:1000], sess).reshape(-1, 28, 28)
@@ -330,18 +345,18 @@ if __name__ == "__main__":
         plt.subplot2grid((3, 8), (0, im_id))
         plt.title('Noisy')
         plt.axis('off')
-        plt.imshow(X_ts[im_id].reshape(28, 28),
+        plt.imshow(X_ts[999-im_id].reshape(28, 28),
             cmap='Greys', interpolation='nearest')
 
         plt.subplot2grid((3, 8), (1, im_id))
         plt.title('Denoised')
         plt.axis('off')
-        plt.imshow(Y_pred[im_id], cmap='Greys', interpolation='nearest')
+        plt.imshow(Y_pred[999-im_id], cmap='Greys', interpolation='nearest')
 
         plt.subplot2grid((3, 8), (2, im_id))
         plt.title('Original')
         plt.axis('off')
-        plt.imshow(Y_ts[im_id].reshape(28, 28),
+        plt.imshow(Y_ts[999-im_id].reshape(28, 28),
             cmap='Greys', interpolation='nearest')
 
     plt.savefig('fcnn_results.png')

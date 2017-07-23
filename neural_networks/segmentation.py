@@ -37,12 +37,15 @@ def get_img_and_mask(img_ids, im_size,  cat_id, coco):
     for ann_single in ann:
         mask += coco.annToMask(ann_single)
     mask[mask > 1] = 1
-    if mask.sum() > mask.size / 50.:
-        image = skimage.transform.resize(image, im_size[:2])
-        mask = skimage.transform.resize(mask, im_size[:2])
-        return image, mask, True
-    else:
-        return None, None, False
+    image = image / 255.
+    if image.shape[0] > im_size[0] and image.shape[1] > im_size[1]:
+        row = np.random.choice(image.shape[0] - im_size[0])
+        col = np.random.choice(image.shape[1] - im_size[1])
+        image = image[row:row+im_size[0], col:col+im_size[1]]
+        mask = mask[row:row+im_size[0], col:col+im_size[1]]
+        if mask.sum() > mask.size / 100.:
+            return image, mask, True
+    return None, None, False
 
 def get_coco_batch(category, batch_size, im_size, coco, data_type='train'):
     # Get ids of current category.
@@ -126,17 +129,17 @@ class SegmentNN(FCNN):
     def define_loss(self):
         """ Use weighted cross-entropy. The larger pos_weight, the more
         attention the loss pays to the positive class. """
-        #loss = tf.nn.weighted_cross_entropy_with_logits(
-        #    self.y_tf, self.y_pred, pos_weight=self.pos_weight)
-        #loss = tf.losses.mean_squared_error(self.y_tf, tf.nn.sigmoid(self.y_pred))
-        #loss = tf.nn.sigmoid((1 - self.y_tf) * self.y_pred) - tf.nn.sigmoid(self.y_tf * self.y_pred)
-        #loss = tf.nn.sigmoid((1 - self.y_tf) * self.y_pred - 10 * self.y_tf * self.y_pred)
-        y_tf_bool = tf.cast(self.y_tf, tf.bool)
-        loss_pos = -tf.reduce_mean(
-            tf.boolean_mask(self.y_pred, y_tf_bool))
-        loss_neg = tf.reduce_mean(
-            tf.boolean_mask(self.y_pred, tf.logical_not(y_tf_bool)))
-        return tf.nn.sigmoid(loss_pos) + tf.nn.sigmoid(loss_neg)
+        #loss_pos = tf.nn.sigmoid(-.1 * tf.reduce_mean(
+        #    tf.boolean_mask(self.y_pred, self.y_tf)))
+        #loss_neg = tf.nn.sigmoid(.1 * tf.reduce_mean(
+        #    tf.boolean_mask(self.y_pred, tf.logical_not(self.y_tf))))
+        loss_pos = tf.reduce_mean(tf.nn.sigmoid(-.1 * 
+            tf.boolean_mask(self.y_pred, self.y_tf)))
+        loss_neg = tf.reduce_mean(tf.nn.sigmoid(.1 *
+            tf.boolean_mask(self.y_pred, tf.logical_not(self.y_tf))))
+        tf.summary.scalar('loss_pos', loss_pos)
+        tf.summary.scalar('loss_neg', loss_neg)
+        return loss_pos + loss_neg
 
 if __name__ == "__main__":
     """ Check that the network works as expected. Denoise MNIST. 
@@ -144,25 +147,25 @@ if __name__ == "__main__":
     """
     im_shape = [200, 200] # Images will be reshaped to this shape.
     n_layers = 4
-    batch_size = 64
+    batch_size = 80
 
     def fetch_data(batch_size, data_type):
         ims, masks = get_coco_batch(category='person', batch_size=batch_size,
             im_size=im_shape, coco=coco, data_type=data_type)
-        return ims, masks
+        return ims, masks.astype(bool)
 
     # Define the graph.
-    fcnn = SegmentNN(x_shape = im_shape + [3], y_channels=1,
+    y_tf = tf.placeholder(tf.bool, [None, im_shape[0], im_shape[1], 1])
+    fcnn = SegmentNN(x_shape = im_shape + [3], y_tf=y_tf, y_channels=1,
         n_layers=n_layers, res=False, n_filters=np.array(
-            [32] * n_layers),
-        save_fname='segment_person2', pos_weight=1.5)
+            [32] * n_layers), save_fname='segment_person3')
 
 
     # Create a Tensorflow session and train the net.
     with tf.Session() as sess:
         # Define the Tensorflow session, and its initializer op.
         sess.run(tf.global_variables_initializer())
-        #fcnn.saver.restore(sess, 'segment_person2')
+        fcnn.saver.restore(sess, 'segment_person2')
 
         # Use a writer object for Tensorboard visualization.
         summary = tf.summary.merge_all()
@@ -170,8 +173,10 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(sess, fetch_data, epochs=1000,
-            batch_size=batch_size, lr=0.001, writer=writer, summary=summary)
+        #fcnn.fit(sess, fetch_data, epochs=10000,
+        #    batch_size=batch_size, lr=0.01, writer=writer, summary=summary)
+        #fcnn.fit(sess, fetch_data, epochs=10000,
+        #    batch_size=batch_size, lr=0.01, writer=writer, summary=summary)
         # Predict.
         ims_ts, masks_ts = fetch_data(batch_size, 'test')
         Y_pred = fcnn.predict(ims_ts, sess)
@@ -185,7 +190,7 @@ if __name__ == "__main__":
 
         plt.subplot2grid((3, 8), (1, im_id_id))
         plt.imshow(ims_ts[im_id], interpolation='nearest', vmin=0, vmax=1)
-        plt.imshow(Y_pred[im_id].squeeze(), cmap='gray', alpha=.8)
+        plt.imshow(Y_pred[im_id].squeeze() > .99, cmap='gray', alpha=.8)
 
         plt.subplot2grid((3, 8), (2, im_id_id))
         plt.imshow(ims_ts[im_id], interpolation='nearest', vmin=0, vmax=1)
