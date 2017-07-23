@@ -12,7 +12,7 @@ import tensorflow as tf
 from neural_networks import scalers
 
 def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
-    kernel_size=3, stride=(1, 1), nonlin=tf.nn.elu, residual=False, reuse=False):
+    kernel_size=3, stride=(1, 1), nonlin=tf.nn.relu, residual=False, bn=True, reuse=False):
     """ A convolutional resnet building block.
     
     Pushes in_tf through batch_norm, relu, and convolution.
@@ -32,10 +32,12 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
     Returns:
         out_tf: Output tensor.
     """
+    out_tf = in_tf
 
-    # Apply batch normalization.
-    out_tf = tf.layers.batch_normalization(
-        in_tf, center=True, scale=True, training=is_training_tf)
+    if bn:
+        # Apply batch normalization.
+        out_tf = tf.layers.batch_normalization(
+            out_tf, center=True, scale=True, training=is_training_tf)
 
     # Apply the nonlinearity.
     out_tf = nonlin(out_tf)
@@ -46,13 +48,15 @@ def bn_relu_conv(in_tf, is_training_tf, n_filters=16,
         padding='same', activation=None, reuse=reuse, name='conv1')
 
     if residual:
-        out_tf = tf.layers.batch_normalization(
-            out_tf, center=True, scale=True, training=is_training_tf)
+        if bn:
+            out_tf = tf.layers.batch_normalization(
+                out_tf, center=True, scale=True, training=is_training_tf)
         out_tf = nonlin(out_tf)
         out_tf = tf.layers.conv2d(
             out_tf, filters=n_filters, kernel_size=kernel_size, strides=stride,
             padding='same', activation=None, reuse=reuse, name='conv2')
         out_tf += in_tf
+
     tf.summary.histogram('ftr_map', out_tf)
 
     return out_tf
@@ -82,7 +86,7 @@ class FCNN(object):
     TODO: This first version has no residual connections!
     """
     def __init__(self, x_shape, y_channels, n_layers=4, n_filters=None,
-        x_tf=None, reuse=False, bn=True, res=True, save_fname=None, **kwargs):
+        x_tf=None, y_tf=None, reuse=False, bn=True, res=True, save_fname=None, **kwargs):
         if n_filters is None:
             n_filters = np.array([64] * n_layers)
         if n_layers != len(n_filters):
@@ -102,8 +106,11 @@ class FCNN(object):
                 [None, x_shape[0], x_shape[1], x_shape[2]], name='input')
         else:
             self.x_tf = x_tf
-        self.y_tf = tf.placeholder(tf.float32,
-            [None, x_shape[0], x_shape[1], y_channels], name='output')
+        if y_tf is None:
+            self.y_tf = tf.placeholder(tf.float32,
+                [None, x_shape[0], x_shape[1], y_channels], name='output')
+        else:
+            self.y_tf = y_tf
         self.lr_tf = tf.placeholder(tf.float32, name='learningrate')
         self.is_training_tf = tf.placeholder(tf.bool, name='train_flag')
 

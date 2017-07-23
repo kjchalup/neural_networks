@@ -37,22 +37,14 @@ def get_img_and_mask(img_ids, im_size,  cat_id, coco):
     for ann_single in ann:
         mask += coco.annToMask(ann_single)
     mask[mask > 1] = 1
-    if mask.sum() > mask.size / 100.:
-        if False and image.shape[0] > im_shape[0] and image.shape[1] > im_shape[1]:
-            h_start = np.random.choice(image.shape[0] - im_shape[0])
-            w_start = np.random.choice(image.shape[1] - im_shape[1])
-            image = image[h_start:h_start + im_shape[0],
-                    w_start:w_start + im_shape[1]] / 255.
-            mask = mask[h_start:h_start + im_shape[0],
-                    w_start:w_start + im_shape[1]]
-        else:
-            image = skimage.transform.resize(image, im_size[:2])
-            mask = skimage.transform.resize(mask, im_size[:2])
+    if mask.sum() > mask.size / 50.:
+        image = skimage.transform.resize(image, im_size[:2])
+        mask = skimage.transform.resize(mask, im_size[:2])
         return image, mask, True
     else:
         return None, None, False
 
-def get_coco_batch(category, batch_size, im_size, coco, data_type='traffic light'):
+def get_coco_batch(category, batch_size, im_size, coco, data_type='train'):
     # Get ids of current category.
     cat_id = coco.getCatIds(catNms=[category])[0]
 
@@ -109,78 +101,50 @@ class SegmentNN(FCNN):
         """ Define the segmentation network. """
         y_pred = self.x_tf
 
-        # Downsample the images. E.g. a 224x224x3 image should be shrunk to
-        # 56x56x64 after these operations.
-        with tf.variable_scope('downsample'):
-            y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                n_filters=self.n_filters[0], residual=False,
-                kernel_size=7, stride=(2, 2))
-            y_pred = tf.layers.max_pooling2d(
-                y_pred, pool_size=2, strides=(2, 2), padding='same')
-
         # Push the image through a resnet. Image shape should remain constant.
-        for layer_id in range(self.n_layers):
-            with tf.variable_scope('layer{}'.format(layer_id)):
+        y_pred = tf.layers.conv2d(
+            y_pred, filters=self.n_filters[0], kernel_size=(1, 1), strides=(1, 1),
+            padding='same', activation=None, reuse=self.reuse)
+    
+        for layer_id in range(8):
+            with tf.variable_scope('7x7layer{}'.format(layer_id)):
                 y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                    n_filters=self.n_filters[layer_id], stride=(1, 1), 
-                    residual=self.res, reuse=self.reuse)
+                    n_filters=16, stride=(1, 1), bn=True,
+                    kernel_size=(5, 5), residual=self.res, reuse=self.reuse)
 
-        with tf.variable_scope('downsample2'):
-            y_pred = tf.layers.max_pooling2d(
-                y_pred, pool_size=2, strides=(2, 2), padding='same')
-        for layer_id in range(self.n_layers, 2 * self.n_layers):
-            with tf.variable_scope('layer{}'.format(layer_id)):
-                y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                    n_filters=self.n_filters[0] * 2, stride=(1, 1), 
-                    residual=self.res, reuse=self.reuse)
-            intermediate_layer = y_pred
-
-        with tf.variable_scope('downsample3'):
-            y_pred = tf.layers.max_pooling2d(
-                y_pred, pool_size=2, strides=(2, 2), padding='same')
-        for layer_id in range(2*self.n_layers, 3*self.n_layers):
-            with tf.variable_scope('layer{}'.format(layer_id)):
-                y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                    n_filters=self.n_filters[0] * 4, stride=(1, 1), 
-                    residual=self.res, reuse=self.reuse)
-
-        # Deconvolve the image back to its original shape.
-        with tf.variable_scope('upsample1'):
-            y_pred = tf.layers.conv2d_transpose(y_pred, filters=self.n_filters[0],
-                kernel_size=(5, 5), strides=(2, 2), padding='same', use_bias=False)
-            y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                n_filters=self.n_filters[0] * 2, stride=(1, 1), 
-                residual=self.res, reuse=self.reuse)
-            y_pred += intermediate_layer
-
-        with tf.variable_scope('upsample2'):
-            y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-                n_filters=1, stride=(1, 1), kernel_size=(3, 3),
-                residual=self.res, reuse=self.reuse)
-            y_pred = tf.image.resize_images(y_pred, size=self.x_shape[:2])
-            #y_pred = tf.layers.conv2d_transpose(y_pred, filters=self.n_filters[0],
-            #    kernel_size=(7, 7), strides=(8, 8), padding='same', use_bias=False)
-            #y_pred = bn_relu_conv(y_pred, self.is_training_tf,
-            #    n_filters=1, stride=(1, 1), 
-            #    residual=self.res, reuse=self.reuse)
+        with tf.variable_scope('collapse'):
+            y_pred = tf.nn.sigmoid(tf.layers.batch_normalization(
+                y_pred, center=True, scale=True, training=self.is_training_tf))
+            y_pred = tf.layers.conv2d(
+                y_pred, filters=1, kernel_size=(1, 1), strides=(1, 1),
+                padding='same', activation=None, reuse=self.reuse)
+        tf.summary.histogram('output', y_pred)
 
         return y_pred
-    
+
 
     def define_loss(self):
         """ Use weighted cross-entropy. The larger pos_weight, the more
         attention the loss pays to the positive class. """
-        loss = tf.nn.weighted_cross_entropy_with_logits(
-            self.y_tf, self.y_pred, pos_weight=self.pos_weight)
-        return tf.reduce_mean(loss)
+        #loss = tf.nn.weighted_cross_entropy_with_logits(
+        #    self.y_tf, self.y_pred, pos_weight=self.pos_weight)
+        #loss = tf.losses.mean_squared_error(self.y_tf, tf.nn.sigmoid(self.y_pred))
+        #loss = tf.nn.sigmoid((1 - self.y_tf) * self.y_pred) - tf.nn.sigmoid(self.y_tf * self.y_pred)
+        #loss = tf.nn.sigmoid((1 - self.y_tf) * self.y_pred - 10 * self.y_tf * self.y_pred)
+        y_tf_bool = tf.cast(self.y_tf, tf.bool)
+        loss_pos = -tf.reduce_mean(
+            tf.boolean_mask(self.y_pred, y_tf_bool))
+        loss_neg = tf.reduce_mean(
+            tf.boolean_mask(self.y_pred, tf.logical_not(y_tf_bool)))
+        return tf.nn.sigmoid(loss_pos) + tf.nn.sigmoid(loss_neg)
 
 if __name__ == "__main__":
     """ Check that the network works as expected. Denoise MNIST. 
     Takes about a minute on a Titan X GPU.
     """
-    im_shape = [224, 224] # Images will be reshaped to this shape.
+    im_shape = [200, 200] # Images will be reshaped to this shape.
     n_layers = 4
-    batch_size = 128
+    batch_size = 64
 
     def fetch_data(batch_size, data_type):
         ims, masks = get_coco_batch(category='person', batch_size=batch_size,
@@ -190,15 +154,15 @@ if __name__ == "__main__":
     # Define the graph.
     fcnn = SegmentNN(x_shape = im_shape + [3], y_channels=1,
         n_layers=n_layers, res=False, n_filters=np.array(
-            [48] * n_layers),
-        save_fname='segment_person', pos_weight=1.)
+            [32] * n_layers),
+        save_fname='segment_person2', pos_weight=1.5)
 
 
     # Create a Tensorflow session and train the net.
     with tf.Session() as sess:
         # Define the Tensorflow session, and its initializer op.
         sess.run(tf.global_variables_initializer())
-        #fcnn.saver.restore(sess, 'segment_person')
+        #fcnn.saver.restore(sess, 'segment_person2')
 
         # Use a writer object for Tensorboard visualization.
         summary = tf.summary.merge_all()
@@ -206,9 +170,8 @@ if __name__ == "__main__":
         writer.add_graph(sess.graph)
 
         # Fit the net.
-        fcnn.fit(sess, fetch_data, epochs=100,
-            batch_size=batch_size, lr=0.1, writer=writer, summary=summary)
-
+        fcnn.fit(sess, fetch_data, epochs=1000,
+            batch_size=batch_size, lr=0.001, writer=writer, summary=summary)
         # Predict.
         ims_ts, masks_ts = fetch_data(batch_size, 'test')
         Y_pred = fcnn.predict(ims_ts, sess)
