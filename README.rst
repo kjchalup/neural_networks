@@ -34,19 +34,8 @@ Neural Network (FCNN) with batch normalization and residual connections to denoi
 .. code-block:: python
 
     [...] # Code that defines the FCNN.
-    import matplotlib.pyplot as plt
-    from tensorflow.examples.tutorials.mnist import input_data
-    mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
-    ims_tr = mnist.train.images.reshape(-1, 28, 28, 1)
-    ims_ts = mnist.test.images.reshape(-1, 28, 28, 1)
-
-    # Create a dataset of MNIST with random binary noise as inputs
-    # and the original digits as outputs.
-    X_tr = ims_tr + np.abs(np.random.randn(*ims_tr.shape) * .1)
-    Y_tr = ims_tr
-    X_ts = ims_ts + np.abs(np.random.randn(*ims_ts.shape) * .1)
-    Y_ts = ims_ts
-
+    [...] # Load MNIST data and add random uniform(0, 1) noise at 20% of the pixels.
+    
     # Define the graph.
     fcnn = FCNN(x_shape = ims_tr.shape[1:])
 
@@ -68,27 +57,18 @@ Neural Network (FCNN) with batch normalization and residual connections to denoi
     
         [...] # More code that plots the results.
 
-This trains an FCNN. The default settings set up a tiny network, with the advantage that it trains in less than a minute on a Titan X GPU, and good enough for testing the architecture. You can use `Tensorboard`_ to visualize the graph. For example, the image below illustrates the graph and zooms onto one specific batch norm -- residual layer:
+This trains an FCNN. You can use `Tensorboard`_ to visualize the graph. For example, the image below illustrates the graph and zooms onto one specific batch norm -- residual layer:
 
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/fcnn_graph.png
         :alt: Example FCNN graph.
         :align: center
 
-Our FCNN indeed learned to denoise noisy MNIST pretty well:
+Our FCNN learned to denoise noisy MNIST very well:
 
     .. image:: https://github.com/kjchalup/neural_networks/blob/master/smoothmnist.png
         :alt: Example NN training output.
         :align: center
-        
-You can also use `Tensorboard`_ to visualize training and validation validation loss, and all kinds of other training stats:
-
-    .. image:: https://github.com/kjchalup/neural_networks/blob/master/tr_loss.png
-        :alt: Validation loss.
-        :align: center
-        
-    .. image:: https://github.com/kjchalup/neural_networks/blob/master/val_loss.png
-        :alt: Validation loss.
-        :align: center
+    
 
 Implemented Methods
 -------------------
