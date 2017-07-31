@@ -91,8 +91,6 @@ class FCNN(object):
         save_fname=None, **kwargs):
         if n_filters is None:
             n_filters = np.array([64] * n_layers)
-        if n_layers != len(n_filters):
-            raise ValueError('Number of layers must equal len(n_filters)')
         self.x_shape = x_shape
         self.y_channels = y_channels
         self.n_layers = n_layers
@@ -159,7 +157,7 @@ class FCNN(object):
                 y_pred, filters=self.y_channels, kernel_size=1, padding='same',
                 activation=None, reuse=self.reuse)
 
-        return tf.nn.sigmoid(y_pred)
+        return y_pred
 
     def define_loss(self):
         loss = tf.losses.mean_squared_error(self.y_tf, self.y_pred)

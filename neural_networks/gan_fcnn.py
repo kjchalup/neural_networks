@@ -76,26 +76,29 @@ class GAN_FCNN(object):
 
     def define_scalers(self):
         """ Use the MinMax scaler, as generator will have tanh outputs. """
-        return MinMaxScaler(feature_range=(-1, 1))
+        return MinMaxScaler(feature_range=(0, 1))
 
     def define_gan(self):
         with tf.variable_scope('generator'):
-            gen_net = SkeletonFCNN(
-                x_shape=self.x_shape, x_tf=self.z_tf, n_layers=4,
-                n_filters=np.array([32] * 4))
-            x_from_z = tf.nn.tanh(gen_net.y_pred)
+            self.gen_net = SkeletonFCNN(
+                x_shape=self.x_shape, y_channels=1, x_tf=self.z_tf, n_layers=2,
+                n_filters=np.array([128] * 2), bn=False, res=False)
+            x_from_z = tf.nn.sigmoid(self.gen_net.y_pred)
 
         with tf.variable_scope('discriminator') as scope:
             # Transform the (h x w x c) feature map to a scalar by avg pooling.
-            disc_net = SkeletonFCNN(x_shape=self.x_shape, x_tf=self.x_tf,
-                n_layers=6, n_filters=np.array([32] * 6))
-            y_from_x = tf.reduce_mean(disc_net.y_pred, axis=[1, 2, 3])
+            self.disc_net = SkeletonFCNN(x_shape=self.x_shape, x_tf=self.x_tf,
+                y_channels=1, n_layers=6, n_filters=np.array([32] * 6),
+                bn=False, res=False)
+            y_from_x = tf.reduce_mean(self.disc_net.y_pred, axis=[1, 2, 3])
             y_from_x = tf.reshape(y_from_x, [-1, 1])
+
             scope.reuse_variables()
 
-            y_from_z = SkeletonFCNN(x_shape=self.x_shape, x_tf=x_from_z,
-                n_layers=6, n_filters=np.array([32] * 6), reuse=True).y_pred
-            y_from_z = tf.reduce_mean(y_from_z, axis=[1, 2, 3])
+            self.disc_net_2 = SkeletonFCNN(x_shape=self.x_shape, x_tf=x_from_z,
+                y_channels=1, n_layers=6, n_filters=np.array([32] * 6),
+                reuse=True, bn=False, res=False)
+            y_from_z = tf.reduce_mean(self.disc_net_2.y_pred, axis=[1, 2, 3])
             y_from_z = tf.reshape(y_from_z, [-1, 1])
 
         return y_from_x, y_from_z, x_from_z
@@ -120,7 +123,7 @@ class GAN_FCNN(object):
             self.d_loss_tf,  var_list=var_list)
 
     def fit(self, x, sess, epochs=1000, batch_size=32, lr=1e-3,
-            n_diters=100, nn_verbose=True, **kwargs):
+            n_diters=10, nn_verbose=True, **kwargs):
         start_time = time.time()
         batch_size = min(batch_size, x.shape[0])
         x = self.scaler_x.fit_transform(x)
@@ -131,14 +134,20 @@ class GAN_FCNN(object):
                 x_real = x[np.random.choice(x.shape[0], batch_size)]
                 feed_dict = {self.x_tf: x_real,
                              self.z_tf: z_noise,
-                             self.lr_tf: lr}
+                             self.lr_tf: lr,
+                             self.gen_net.is_training_tf: True,
+                             self.disc_net_2.is_training_tf: True,
+                             self.disc_net.is_training_tf: True}
                 _, dloss = sess.run([self.d_train_tf, self.d_loss_tf],
                     feed_dict)
 
             # Train the generator.
             z_noise = self.sample_noise(batch_size)
             feed_dict = {self.z_tf: z_noise,
-                         self.lr_tf: lr}
+                         self.lr_tf: lr,
+                         self.disc_net.is_training_tf: True,
+                         self.disc_net_2.is_training_tf: True,
+                         self.gen_net.is_training_tf: True}
             _, gloss = sess.run([self.g_train_tf, self.g_loss_tf], feed_dict)
             
             # Bookkeeping.
@@ -161,7 +170,8 @@ class GAN_FCNN(object):
                 generator's distribution.
         """
         z_noise = self.sample_noise(n_samples)
-        feed_dict = {self.z_tf: z_noise}
+        feed_dict = {self.z_tf: z_noise,
+                     self.gen_net.is_training_tf: True}
         x = sess.run(self.x_from_z, feed_dict)
         return self.scaler_x.inverse_transform(x)
 
@@ -187,9 +197,10 @@ if __name__=="__main__":
     ims_tr = mnist.train.images[np.where(lbls[:, 7].flatten())[0]].reshape(-1, 28, 28, 1)
 
     kwargs = {
-              'epochs': 1000,
-              'lr': 1e-4,
-              'batch_size': 32
+              'epochs': 100,
+              'lr': 1e-5,
+              'batch_size': 265,
+              'n_diters': 1,
              }
     gan = GAN_FCNN(x_shape=ims_tr.shape[1:])
 
@@ -217,7 +228,7 @@ if __name__=="__main__":
             cmap='Greys', interpolation='nearest')
 
         plt.subplot2grid((2, 8), (1, im_id_id))
-        plt.title('Nearest-Neighbor')
+        plt.title('Generated')
         plt.axis('off')
         plt.imshow(X_samples[im_id].reshape(28, 28),
             cmap='Greys', interpolation='nearest')

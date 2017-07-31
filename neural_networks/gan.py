@@ -22,7 +22,7 @@ class SkeletonNN(nn.NN):
     __doc__ += nn.NN.__doc__
 
     def __init__(self, x_tf, dropout_tf, **kwargs):
-       super().__init__(x_tf=x_tf, dropout_tf=dropout_tf,**kwargs)
+       super(SkeletonNN, self).__init__(x_tf=x_tf, dropout_tf=dropout_tf,**kwargs)
 
     def define_loss(self):
         return None
@@ -202,9 +202,9 @@ def sample_data(n_samples):
 if __name__=="__main__":
     from tensorflow.examples.tutorials.mnist import input_data
     import matplotlib.pyplot as plt
-    n_samples = 100000
+    n_samples = 100
     kwargs = {
-              'epochs': 1000,
+              'epochs': 100,
               'g_arch': [128]*2,
               'g_ntype': 'plain',
               'd_arch': [128]*2,
